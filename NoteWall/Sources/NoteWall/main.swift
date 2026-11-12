@@ -1145,6 +1145,21 @@ if args.contains("--clickfliptest") {
         check("指着纸签：状态机不进手型", !HandCursorRegistry.shared.isHand)
         check("指着纸签：真实光标不是手型", NSCursor.current !== NSCursor.pointingHand)
 
+        // v0.9.17 回归：面板底下压着活垫片时，指着面板也不许进手型。
+        // 旧命中判定不看遮挡：垫片在别的窗口里、被 floating 面板盖住，照样判 hit——
+        // 前几版测试都把对照垫片放在远离面板的地方，这条路径从来没被测到。
+        let decoyUnder = NSWindow(contentRect: NSRect(x: tab0.x - 60, y: tab0.y - 40, width: 120, height: 80),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+        decoyUnder.title = "clickfliptest-decoy-under"
+        decoyUnder.contentView = HandCursorView(frame: NSRect(x: 0, y: 0, width: 120, height: 80))
+        decoyUnder.makeKeyAndOrderFront(nil)
+        decoyUnder.setFrameOrigin(NSPoint(x: tab0.x - 60, y: tab0.y - 40))
+        panel.orderFront(nil)   // 面板必须仍在最上（floating 层级本来就高于普通窗口，再钉一次）
+        settle(0.3)
+        warp(tab0); settle(0.6)
+        check("面板底下压着垫片：状态机不进手型", !HandCursorRegistry.shared.isHand)
+        check("面板底下压着垫片：真实光标不是手型", NSCursor.current !== NSCursor.pointingHand)
+
         guard let first = store.edgeNotes.first else { check("有可抽的便签", false); exit(1) }
         let hand0 = HandCursorRegistry.shared.handSwitches
         let arrow0 = HandCursorRegistry.shared.arrowSwitches
@@ -1191,6 +1206,7 @@ if args.contains("--clickfliptest") {
         check("移开后仍不是手型", !HandCursorRegistry.shared.isHand)
 
         decoy.orderOut(nil)
+        decoyUnder.orderOut(nil)
         warp(originalPoint)
         print(failures == 0 ? "clickfliptest 全部通过" : "clickfliptest \(failures) 项失败")
         exit(failures == 0 ? 0 : 1)
