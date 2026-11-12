@@ -2,7 +2,7 @@ name: Build macOS Installer
 
 # 每次往 main 推代码就自动构建 macOS 安装包，并发布到 Releases；
 # 也可以在 Actions 页手动触发。
-# 纸签墙是纯 macOS 应用（Swift Package + AppKit/SwiftUI），只能在 macOS runner 上构建。
+# 随手贴是纯 macOS 应用（Swift Package + AppKit/SwiftUI），只能在 macOS runner 上构建。
 # 仓库根目录就是工程根目录（Package.swift / build.sh 都在根下）。
 on:
   push:
@@ -36,10 +36,10 @@ jobs:
         run: |
           VER="${{ steps.ver.outputs.version }}"
           STAGE="$(mktemp -d)"
-          cp -R "便签墙.app" "$STAGE/"
+          cp -R "StickySide.app" "$STAGE/"
           ln -s /Applications "$STAGE/Applications"
-          hdiutil create -volname "纸签墙" -srcfolder "$STAGE" -ov -format UDZO "NoteWall-$VER.dmg"
-          ditto -c -k --keepParent "便签墙.app" "NoteWall-$VER.zip"
+          hdiutil create -volname "随手贴" -srcfolder "$STAGE" -ov -format UDZO "StickySide-$VER.dmg"
+          ditto -c -k --keepParent "StickySide.app" "StickySide-$VER.zip"
 
       - name: Publish to Releases
         env:
@@ -49,19 +49,19 @@ jobs:
           TAG="v$VER"
           if gh release view "$TAG" >/dev/null 2>&1; then
             # 同版本再次构建：只更新附件，不新建重复的 Release
-            gh release upload "$TAG" "NoteWall-$VER.dmg" "NoteWall-$VER.zip" --clobber
+            gh release upload "$TAG" "StickySide-$VER.dmg" "StickySide-$VER.zip" --clobber
           else
-            gh release create "$TAG" "NoteWall-$VER.dmg" "NoteWall-$VER.zip" \
-              --title "纸签墙 $TAG" \
-              --notes "macOS 安装包（Apple 芯片，macOS 14+）。下载 DMG 打开，把纸签墙拖进 Applications 即可安装。首次打开如被系统拦截，请到「系统设置 → 隐私与安全性」里放行。"
+            gh release create "$TAG" "StickySide-$VER.dmg" "StickySide-$VER.zip" \
+              --title "随手贴 $TAG" \
+              --notes "macOS 安装包（Apple 芯片，macOS 14+）。下载 DMG 打开，把随手贴拖进 Applications 即可安装。首次打开如被系统拦截，请到「系统设置 → 隐私与安全性」里放行。"
           fi
 
       - name: Upload installer artifact (backup)
         uses: actions/upload-artifact@v4
         with:
-          name: NoteWall-${{ steps.ver.outputs.version }}-macOS
+          name: StickySide-${{ steps.ver.outputs.version }}-macOS
           path: |
-            NoteWall-*.dmg
-            NoteWall-*.zip
+            StickySide-*.dmg
+            StickySide-*.zip
           retention-days: 30
           if-no-files-found: error
