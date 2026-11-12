@@ -1,11 +1,11 @@
 #!/bin/bash
-# 构建并打包成可运行的 便签墙.app
+# 构建并打包成可运行的 StickySide.app（随手贴）
 set -e
 cd "$(dirname "$0")"
 CONFIG="${1:-release}"
 swift build -c "$CONFIG" --disable-sandbox
 BIN=".build/$CONFIG/NoteWall"
-APP="便签墙.app"
+APP="StickySide.app"
 
 # 图标缺失时先生成（矢量渲染，改动 tools/icongen.swift 后删掉 Resources/AppIcon.icns 即可重出）
 [ -f Resources/AppIcon.icns ] || ./tools/make-icon.sh
@@ -21,12 +21,12 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <dict>
   <key>CFBundleExecutable</key><string>NoteWall</string>
   <key>CFBundleIdentifier</key><string>com.local.notewall</string>
-  <key>CFBundleName</key><string>便签墙</string>
-  <key>CFBundleDisplayName</key><string>便签墙</string>
+  <key>CFBundleName</key><string>随手贴</string>
+  <key>CFBundleDisplayName</key><string>随手贴</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
-  <key>CFBundleShortVersionString</key><string>0.9.18</string>
-  <key>CFBundleVersion</key><string>107</string>
+  <key>CFBundleShortVersionString</key><string>0.9.19</string>
+  <key>CFBundleVersion</key><string>108</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
