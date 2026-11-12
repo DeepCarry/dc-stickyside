@@ -348,16 +348,13 @@ struct NoteCard: View {
         } else if note.hasContent {
             Button("锁定…", action: onLock).disabled(!canLock)
         }
-        Button("复制文字") { copyText() }
-            .disabled(note.isLocked || note.text.isEmpty)
+        Button("复制便签") {
+            let r = NoteCopy.copy(note)
+            if r != .nothing { ToastCenter.shared.show(r.toast) }
+        }
+            .disabled(note.isLocked || !note.hasContent)
         Divider()
         Button("删除", role: .destructive, action: onDelete)
-    }
-
-    private func copyText() {
-        guard !note.isLocked else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(note.text, forType: .string)
     }
 
 }
