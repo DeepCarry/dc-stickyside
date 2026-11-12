@@ -46,4 +46,8 @@ echo "── 边缘悬浮窗口不再接手型（真实点击 + 抽出全程不�
 "$BIN" --clickfliptest
 
 echo
+echo "── 一键复制（文字 + 图片进剪贴板 / 锁定便签拒绝复制）"
+"$BIN" --copytest
+
+echo
 echo "全部检查通过"

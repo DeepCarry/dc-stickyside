@@ -810,6 +810,13 @@ struct EdgeDeckView: View {
         .help(label)
     }
 
+    /// 一键复制整张便签：文字用当前草稿（可能还没写回 store），图片用原图。
+    /// 边缘面板此前没有任何复制入口，想拷走一条码只能全选再 ⌘C，图片更没路。
+    private func copyCurrent(_ note: Note) {
+        let r = NoteCopy.copy(note, text: model.draft)
+        ToastCenter.shared.show(r.toast)
+    }
+
     private func noteBody(note: Note?, paper: Paper) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
@@ -823,6 +830,17 @@ struct EdgeDeckView: View {
                     Text(TimeLabel.card(note.updatedAt))
                         .font(.ui(10.5))
                         .foregroundStyle(paper.ink.opacity(0.38))
+                }
+                if let note {
+                    Button { copyCurrent(note) } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundStyle(paper.ink.opacity(0.45))
+                            .frame(width: 19, height: 19)
+                            .background(Circle().fill(paper.ink.opacity(0.08)))
+                    }
+                    .buttonStyle(.plain)
+                    .help("复制便签（文字 + 图片）")
                 }
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
