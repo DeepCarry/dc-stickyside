@@ -23,7 +23,7 @@ jobs:
         run: swift --version
 
       - name: Build app (release)
-        run: ./build.sh
+        run: bash ./build.sh
 
       - name: Read version from build.sh
         id: ver
