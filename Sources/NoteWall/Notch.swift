@@ -12,6 +12,16 @@ import AppKit
 //
 // 刘海边界从 NSScreen.auxiliaryTopLeftArea / auxiliaryTopRightArea 读出（不同机型
 // 150~200pt，不许写死常量）。悬停用 NSTrackingArea，不需要辅助功能/屏幕录制权限。
+//
+// v0.2.2 悬停改版（Carry 定案）：悬停不再只是横向变宽，而是长成一张垂落卡片——
+// 第一排仍是刘海两侧的新建 / 打开（位置由几何推导：按钮正落在刘海两侧外 clearance
+// 处，与 buttonRects 的全局矩形一致，不靠布局碰巧），下方加最近便签列表：置顶优先、
+// 最近修改补位（与边缘条同一套展示规则），最多 5 条，锁定便签不出现（与边缘条一致）。
+// 比例：卡宽取刘海宽的 2 倍；顶部两肩贴合圆角、底部大圆角沿用刘海自身的半径比例，
+// 让卡片读起来仍是「刘海长大了」。完全等比只适用于无内容的点击态——装下 5 条便签
+// 需要约 250pt 高，等比放大到这个高度宽度会超过 1300pt，不成立；NotchNook、
+// Boring Notch 等同类产品的展开面板同样是「顶部贴合刘海 + 圆角成比例 + 身体按内容长高」。
+
 
 // MARK: - 几何
 
@@ -39,6 +49,28 @@ struct NotchGeometry {
 
     /// 展开宽度 = 刘海 + 两侧（净距 + 入口 + 边距）
     var expandedWidth: CGFloat { width + 2 * (Self.clearance + Self.buttonW + Self.edgeGap) }
+
+    // v0.2.2 卡片布局常量
+    static let cardBottomRadius: CGFloat = 18   // 垂落卡片的下圆角（刘海半径比例的平移）
+    static let shoulderRadius: CGFloat = 10     // 卡片顶部两肩的贴合圆角
+    static let rowH: CGFloat = 38               // 最近便签单行高度
+    static let maxListNotes = 5                 // 刘海列表最多显示条数
+
+    /// 展开卡片宽度：刘海宽的 2 倍（比例锚点），下限 360，上限屏幕宽 − 24
+    func cardWidth(screenWidth: CGFloat) -> CGFloat {
+        min(max(width * 2, 360), max(360, screenWidth - 24))
+    }
+
+    /// 最近便签区高度：0 条时整区不存在（面板回到只有按钮带的形态）
+    static func notesSectionHeight(count: Int) -> CGFloat {
+        guard count > 0 else { return 0 }
+        return 8 + CGFloat(count) * rowH + CGFloat(count - 1) * 2 + 10
+    }
+
+    /// 展开总高度 = 刘海高（按钮带）+ 便签区
+    func expandedHeight(noteCount: Int) -> CGFloat {
+        height + Self.notesSectionHeight(count: noteCount)
+    }
 
     /// 面板局部坐标（左上原点）里刘海所占的水平区间
     func notchSpan(inPanelWidth panelW: CGFloat) -> (minX: CGFloat, maxX: CGFloat) {
@@ -85,6 +117,19 @@ enum NotchMetrics {
         return NotchGeometry(leftX: screen.frame.midX - w / 2,
                              rightX: screen.frame.midX + w / 2,
                              height: h)
+    }
+}
+
+// MARK: - 最近便签（刘海列表）
+
+/// 刘海列表的选签规则，与边缘条同一套展示逻辑（池子定义同 Store.edgeNotes）：
+/// 未删除、未锁定；置顶（isPinned）排前面，组内按最近修改倒序，合起来取前 limit 条。
+enum NotchNotes {
+    static func top(_ notes: [Note], limit: Int = NotchGeometry.maxListNotes) -> [Note] {
+        let pool = notes.filter { $0.deletedAt == nil && !$0.isLocked }
+        let pinned = pool.filter { $0.isPinned }.sorted { $0.updatedAt > $1.updatedAt }
+        let rest = pool.filter { !$0.isPinned }.sorted { $0.updatedAt > $1.updatedAt }
+        return Array((pinned + rest).prefix(limit))
     }
 }
 
@@ -216,8 +261,12 @@ enum NotchRatioPreview {
 final class NotchModel: ObservableObject {
     @Published var isExpanded = false
     @Published var notchWidth: CGFloat = 185
+    @Published var notchHeight: CGFloat = 32
+    @Published var cardWidth: CGFloat = 370
+    @Published var notes: [Note] = []
     var onNewNote: (() -> Void)?
     var onOpenWall: (() -> Void)?
+    var onOpenNote: ((Note) -> Void)?
 }
 
 final class NotchPanel: NSPanel {
@@ -262,21 +311,29 @@ final class NotchController {
     private var geometry: NotchGeometry?
     private var collapseWork: DispatchWorkItem?
     private let model = NotchModel()
+    private weak var store: AppStore?
     private(set) var isExpanded = false
 
-    func install() {
+    func install(store: AppStore) {
         guard panel == nil,
               let s = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }),
               let g = NotchMetrics.geometry(for: s) else { return }
         screen = s
         geometry = g
+        self.store = store
         model.notchWidth = g.width
+        model.notchHeight = g.height
+        model.cardWidth = g.cardWidth(screenWidth: s.frame.width)
 
         model.onNewNote = { [weak self] in
             self?.collapseNow()
             CaptureController.shared.show()
         }
         model.onOpenWall = { [weak self] in
+            self?.collapseNow()
+            AppDelegate.bringWallToFront()
+        }
+        model.onOpenNote = { [weak self] _ in
             self?.collapseNow()
             AppDelegate.bringWallToFront()
         }
@@ -301,7 +358,13 @@ final class NotchController {
     func hoverEnter() {
         collapseWork?.cancel()
         collapseWork = nil
+        refreshNotes()
         if !isExpanded { apply(true) }
+    }
+
+    /// 每次展开前现算列表：面板高度由条数决定，必须在改 frame 之前拿到
+    private func refreshNotes() {
+        model.notes = NotchNotes.top(store?.notes ?? [])
     }
 
     func hoverExit() {
@@ -315,13 +378,15 @@ final class NotchController {
 
     // MARK: 布局
 
-    /// 两翼：以刘海中心为锚横向加宽，纵向不动（顶端贴住屏幕顶边）
+    /// 展开：以刘海中心为锚长成垂落卡片（宽 = 刘海 2 倍，高 = 刘海高 + 便签区）；
+    /// 收起：回到与刘海严格同宽同高。顶端始终贴住屏幕顶边。
     private func frame(expanded: Bool) -> NSRect {
         guard let s = screen, let g = geometry else { return .zero }
-        let w = expanded ? g.expandedWidth : g.collapsedWidth
+        let w = expanded ? g.cardWidth(screenWidth: s.frame.width) : g.collapsedWidth
+        let h = expanded ? g.expandedHeight(noteCount: model.notes.count) : g.height
         return NSRect(x: g.centerX - w / 2,
-                      y: s.frame.maxY - g.height,
-                      width: w, height: g.height)
+                      y: s.frame.maxY - h,
+                      width: w, height: h)
     }
 
     private func apply(_ expanded: Bool) {
@@ -343,25 +408,47 @@ struct NotchContentView: View {
     @ObservedObject var model: NotchModel
 
     var body: some View {
-        HStack(spacing: 0) {
-            notchButton("plus", label: "新建", action: model.onNewNote)
-            // 中间留出刘海本身的宽度 + 两侧净距：入口被布局顶到刘海之外，
-            // 而不是靠坐标碰巧避开（物理刘海宽度随机型变化）。
-            Spacer(minLength: model.notchWidth + 2 * NotchGeometry.clearance)
-            notchButton("rectangle.stack", label: "打开", action: model.onOpenWall)
+        VStack(spacing: 0) {
+            // 按钮带：高度严格等于刘海高。左右留白由几何算出，按钮正落在刘海
+            // 两侧外 clearance 处（与 buttonRects 的全局推导一致），不多不少。
+            HStack(spacing: 0) {
+                notchButton("plus", label: "新建", action: model.onNewNote)
+                Spacer(minLength: model.notchWidth + 2 * NotchGeometry.clearance)
+                notchButton("rectangle.stack", label: "打开", action: model.onOpenWall)
+            }
+            .padding(.horizontal, wingPadding)
+            .frame(height: model.notchHeight)
+
+            // 最近便签：置顶优先 + 最近修改补位（规则见 NotchNotes）
+            if !model.notes.isEmpty {
+                VStack(spacing: 2) {
+                    ForEach(model.notes) { note in
+                        NotchNoteRow(note: note) { model.onOpenNote?(note) }
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 8)
+                .padding(.bottom, 10)
+                .opacity(model.isExpanded ? 1 : 0)
+            }
         }
-        .padding(.horizontal, NotchGeometry.edgeGap)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background {
             // 只有展开时才画黑：收起态窗口就落在物理刘海范围内，
             // 那里的黑是硬件，我们再画一层就是给刘海描了道直角边。
-            UnevenRoundedRectangle(bottomLeadingRadius: 14,
-                                   bottomTrailingRadius: 14,
-                                   style: .continuous)
+            NotchCardShape()
                 .fill(Color.black)
                 .opacity(model.isExpanded ? 1 : 0)
         }
+        .allowsHitTesting(model.isExpanded)
         .animation(.spring(response: 0.30, dampingFraction: 0.82), value: model.isExpanded)
+    }
+
+    /// 两翼布局（刘海 + 净距 + 入口 + 边距）之外的富余卡宽，平分到左右作留白
+    private var wingPadding: CGFloat {
+        let wings = model.notchWidth + 2 * (NotchGeometry.clearance
+            + NotchGeometry.buttonW + NotchGeometry.edgeGap)
+        return max(NotchGeometry.edgeGap, (model.cardWidth - wings) / 2 + NotchGeometry.edgeGap)
     }
 
     private func notchButton(_ symbol: String, label: String, action: (() -> Void)?) -> some View {
@@ -388,4 +475,117 @@ struct NotchContentView: View {
         .opacity(model.isExpanded ? 1 : 0)
         .help(label == "新建" ? "新建便签" : "打开便签墙")
     }
+}
+
+// MARK: - 垂落卡片轮廓
+
+/// 顶部两肩用贴合圆角（控制点压在角上、曲线向内收），像从屏幕顶边垂下来；
+/// 底部两角用大圆角收尾，半径取自刘海自身的半径比例。
+struct NotchCardShape: Shape {
+    var shoulder: CGFloat = NotchGeometry.shoulderRadius
+    var bottom: CGFloat = NotchGeometry.cardBottomRadius
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let w = rect.width, h = rect.height
+        p.move(to: CGPoint(x: shoulder, y: 0))
+        p.addLine(to: CGPoint(x: w - shoulder, y: 0))
+        p.addQuadCurve(to: CGPoint(x: w, y: shoulder), control: CGPoint(x: w, y: 0))
+        p.addLine(to: CGPoint(x: w, y: h - bottom))
+        p.addQuadCurve(to: CGPoint(x: w - bottom, y: h), control: CGPoint(x: w, y: h))
+        p.addLine(to: CGPoint(x: bottom, y: h))
+        p.addQuadCurve(to: CGPoint(x: 0, y: h - bottom), control: CGPoint(x: 0, y: h))
+        p.addLine(to: CGPoint(x: 0, y: shoulder))
+        p.addQuadCurve(to: CGPoint(x: shoulder, y: 0), control: CGPoint(x: 0, y: 0))
+        p.closeSubpath()
+        return p
+    }
+}
+
+// MARK: - 最近便签行
+
+struct NotchNoteRow: View {
+    let note: Note
+    var action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                thumb
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Color.white.opacity(0.92))
+                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        if note.isPinned {
+                            Image(systemName: "pin.fill")
+                                .font(.system(size: 8.5))
+                        }
+                        Text(subtitle)
+                            .lineLimit(1)
+                    }
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Color.white.opacity(0.45))
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: NotchGeometry.rowH)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Color.white.opacity(hovering ? 0.13 : 0.05))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).handCursor()
+        .onHover { hovering = $0 }
+    }
+
+    /// 左侧 24pt 方片：有图用缩略图，没图用纸色（靠颜色认便签是产品的心智）
+    private var thumb: some View {
+        Group {
+            if let img = note.image, let ns = ImageStore.load(img.thumbName, thumb: true) {
+                Image(nsImage: ns)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                note.paper.paper
+            }
+        }
+        .frame(width: 24, height: 24)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    /// 一行预览：正文第一非空行（清单剥掉勾选标记）→ 图片 / 空白兜底
+    private var title: String {
+        for line in note.text.components(separatedBy: "\n") {
+            var t = line.trimmingCharacters(in: .whitespaces)
+            if t.isEmpty { continue }
+            for mark in ["✓ ", "☑ ", "☐ ", "[x] ", "[ ] ", "· "] where t.hasPrefix(mark) {
+                t = String(t.dropFirst(mark.count)).trimmingCharacters(in: .whitespaces)
+            }
+            if !t.isEmpty { return t }
+        }
+        if let first = Checklist.parse(note.text).first { return first.text }
+        return note.image != nil ? "图片便签" : "空白便签"
+    }
+
+    private var subtitle: String {
+        var parts: [String] = []
+        if note.isChecklist {
+            let p = note.checklistProgress
+            parts.append("清单 \(p.done)/\(p.total)")
+        }
+        if !note.tag.isEmpty { parts.append(note.tag) }
+        parts.append(Self.timeFormatter.localizedString(for: note.updatedAt, relativeTo: Date()))
+        return parts.joined(separator: " · ")
+    }
+
+    private static let timeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
 }

@@ -111,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         installStatusItem()
-        NotchController.shared.install()
+        NotchController.shared.install(store: store)
         EdgeDeckController.shared.attach(store: store)
 
         // 首次上线时指一下路：细条存在感极低，不说一声很多人永远发现不了
