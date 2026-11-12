@@ -1,0 +1,1104 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>便签墙 · 屏幕边缘条 原型 v0.1</title>
+<style>
+/* ============================================================
+   Design tokens（与主原型一致）
+   ============================================================ */
+:root{
+  --bg:#0A0A0C;
+  --rail:#0E0E11;
+  --panel:#121215;
+  --panel-2:#17171B;
+  --elev:#1D1D22;
+  --text:#F3F3F5;
+  --dim:rgba(243,243,245,.52);
+  --dim-2:rgba(243,243,245,.30);
+  --line:rgba(255,255,255,.075);
+  --line-2:rgba(255,255,255,.12);
+  --accent:#E8C46B;
+  --accent-ink:#2A2415;
+  --win-shadow:0 50px 110px rgba(0,0,0,.62), 0 0 0 .5px rgba(255,255,255,.10);
+  --r-lg:16px; --r-md:12px; --r-sm:8px;
+  --spring:cubic-bezier(.34,1.36,.44,1);
+  /* 便签纸色（与 App 内一致） */
+  --p-yellow:#F7E7A6; --p-pink:#F4D2DC; --p-blue:#CFE0F7;
+  --p-mint:#D2EDDC; --p-purple:#E2D8F5; --p-cream:#F0E8DA;
+}
+html[data-theme="light"]{
+  --bg:#E9E7E2; --rail:#F4F2EE; --panel:#FFFFFF; --panel-2:#F7F5F1; --elev:#FFFFFF;
+  --text:#1B1A18; --dim:rgba(27,26,24,.56); --dim-2:rgba(27,26,24,.34);
+  --line:rgba(0,0,0,.08); --line-2:rgba(0,0,0,.13);
+  --win-shadow:0 40px 90px rgba(60,50,35,.16), 0 0 0 .5px rgba(0,0,0,.08);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg);color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;overflow:hidden;
+}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+svg{display:block}
+
+/* ============================================================
+   Viewer chrome
+   ============================================================ */
+.viewer{display:flex;height:100vh}
+.rail{
+  width:262px;flex:0 0 262px;background:var(--rail);
+  border-right:1px solid var(--line);
+  display:flex;flex-direction:column;padding:22px 14px 16px;
+}
+.brand{display:flex;gap:10px;align-items:center;padding:0 8px 20px}
+.brand-mark{
+  width:30px;height:30px;border-radius:9px;flex:0 0 30px;
+  background:linear-gradient(150deg,#F7E7A6,#E9C46A 55%,#D9AE4E);
+  box-shadow:0 4px 10px rgba(233,196,106,.28), 0 1px 0 rgba(255,255,255,.6) inset;
+  display:grid;place-items:center;color:#3A2E12;font-size:14px;font-weight:700;
+}
+.brand b{display:block;font-size:14px;font-weight:600}
+.brand small{display:block;font-size:11px;color:var(--dim-2);margin-top:1px}
+.scenes{display:flex;flex-direction:column;gap:2px;overflow-y:auto}
+.scene-btn{
+  display:flex;gap:10px;align-items:flex-start;text-align:left;
+  padding:10px;border-radius:9px;transition:background .16s ease;
+}
+.scene-btn:hover{background:rgba(127,127,135,.10)}
+.scene-btn.active{background:rgba(127,127,135,.16)}
+.scene-btn .ico{font-size:15px;line-height:1.3;flex:0 0 20px}
+.scene-btn b{display:block;font-size:12.5px;font-weight:600}
+.scene-btn small{display:block;font-size:11px;color:var(--dim-2);margin-top:2px;line-height:1.45}
+.rail-foot{margin-top:auto;padding:14px 10px 0;font-size:11px;color:var(--dim-2);line-height:1.6}
+.theme-toggle{
+  align-self:flex-start;margin:0 8px 10px;padding:5px 11px;border-radius:99px;
+  border:1px solid var(--line-2);font-size:11.5px;color:var(--dim);
+}
+
+.canvas{flex:1;overflow-y:auto;padding:36px 44px 60px}
+.canvas-inner{max-width:1060px;margin:0 auto}
+/* 不做入场淡入：评审与自动截图都要第一帧就是完整状态 */
+.scene{display:none}
+.scene.active{display:block}
+
+h1{font-size:22px;font-weight:700;letter-spacing:-.02em}
+h1 small{font-size:12.5px;font-weight:400;color:var(--dim);margin-left:10px}
+.hint-line{font-size:13px;color:var(--dim);margin:10px 0 26px;line-height:1.7}
+.hint-line b{color:var(--accent);font-weight:600}
+h2.sec{font-size:15px;font-weight:700;margin:34px 0 12px;letter-spacing:-.01em}
+h2.sec small{font-weight:400;color:var(--dim-2);font-size:12px;margin-left:8px}
+p.body{font-size:13.5px;line-height:1.85;color:var(--dim)}
+p.body b{color:var(--text);font-weight:600}
+
+/* ============================================================
+   Scene 1 · 桌面交互演示
+   ============================================================ */
+.desktop{
+  position:relative;height:640px;border-radius:14px;overflow:hidden;
+  border:1px solid var(--line-2);
+  background:
+    radial-gradient(120% 90% at 78% 12%, rgba(126,152,213,.32), transparent 58%),
+    radial-gradient(120% 110% at 12% 88%, rgba(224,162,121,.24), transparent 55%),
+    linear-gradient(158deg, #23283F 0%, #2E3350 38%, #514560 74%, #7A5F68 100%);
+  box-shadow:var(--win-shadow);
+}
+.desktop.light-bg{
+  background:
+    radial-gradient(120% 90% at 80% 10%, rgba(255,214,177,.55), transparent 60%),
+    radial-gradient(130% 110% at 8% 92%, rgba(172,214,228,.5), transparent 55%),
+    linear-gradient(158deg, #E8D8CB 0%, #DCC9BC 40%, #C7D3D2 78%, #B9CFD8 100%);
+}
+/* 假的“别的应用”窗口：证明不打断 */
+.foreign{
+  position:absolute;left:120px;top:88px;width:520px;height:400px;border-radius:12px;
+  background:var(--panel);border:1px solid var(--line-2);
+  box-shadow:0 30px 70px rgba(0,0,0,.45);
+  padding:0;overflow:hidden;
+}
+.foreign .fbar{
+  height:34px;display:flex;align-items:center;gap:6px;padding:0 12px;
+  border-bottom:1px solid var(--line);background:var(--panel-2);
+}
+.foreign .fbar i{width:11px;height:11px;border-radius:50%;background:rgba(127,127,135,.35)}
+.foreign .fbar span{font-size:11.5px;color:var(--dim-2);margin-left:8px}
+.foreign .fdoc{padding:18px 22px;font-size:13px;line-height:2;color:var(--dim)}
+.foreign .fdoc .ln{height:9px;border-radius:4px;background:rgba(127,127,135,.16);margin:13px 0}
+.foreign .fdoc .ln.w60{width:60%}
+.foreign .fdoc .ln.w85{width:85%}
+.foreign .caret{
+  display:inline-block;width:2px;height:15px;background:var(--accent);
+  vertical-align:-2px;animation:blink 1.1s steps(1) infinite;
+}
+@keyframes blink{50%{opacity:0}}
+
+/* ---- 边缘条：三态核心 ----
+   铁律：贴屏幕的那一侧永远是一条直线，与屏幕边缘零缝隙。
+   三态（细条 / 纸签 / 抽出面板）的贴边侧都是方角、齐平 x = 屏幕边缘，
+   只向屏幕内侧生长；倾斜感来自内缘的伸错，不是整张纸飘起来。 */
+.edge-host{position:absolute;inset:0;cursor:default}
+.edge-deck{
+  position:absolute;right:0;top:50%;transform:translateY(-50%);
+  width:15px;transition:width .24s var(--spring);
+  display:flex;flex-direction:column;align-items:flex-end;justify-content:flex-start;
+  padding:10px 0;
+}
+.edge-host.left .edge-deck{right:auto;left:0;align-items:flex-start}
+.edge-deck.fanned{width:44px}
+
+/* 静止态：细条胶囊。右半被屏幕边缘"截断"，所以只有内侧有圆角 */
+.edge-pill{
+  display:flex;flex-direction:column;gap:5px;align-items:center;
+  padding:9px 6px 9px 5px;margin-right:-2px;
+  border-radius:99px 0 0 99px;
+  background:rgba(20,20,24,.55);
+  border:1px solid rgba(255,255,255,.14);border-right:none;
+  backdrop-filter:blur(8px);
+  box-shadow:-2px 4px 14px rgba(0,0,0,.30);
+  transition:opacity .18s ease, transform .18s var(--spring);
+}
+.edge-host.left .edge-pill{
+  margin-right:0;margin-left:-2px;
+  border-radius:0 99px 99px 0;
+  border-right:1px solid rgba(255,255,255,.14);border-left:none;
+  box-shadow:2px 4px 14px rgba(0,0,0,.30);
+}
+.edge-pill .dash{
+  width:4px;height:13px;border-radius:2px;
+  box-shadow:0 1px 3px rgba(0,0,0,.28);
+}
+.edge-deck.fanned .edge-pill{opacity:0;transform:scale(.6);pointer-events:none;position:absolute}
+
+/* 扇开态：一叠纸签。右侧钉死在屏幕边缘，只向内伸；倾斜轴在贴边那一侧 */
+.edge-tabs{
+  position:relative;opacity:0;transform:translateX(6px);pointer-events:none;
+  transition:opacity .2s ease, transform .26s var(--spring);
+}
+.edge-deck.fanned .edge-tabs{opacity:1;transform:none;pointer-events:auto}
+.edge-tab{
+  position:absolute;top:0;right:-4px;width:32px;height:112px;
+  border-radius:7px 0 0 7px;
+  box-shadow:-4px 6px 16px rgba(0,0,0,.32), 0 1px 0 rgba(255,255,255,.35) inset;
+  cursor:pointer;
+  writing-mode:vertical-rl;text-orientation:mixed;
+  display:flex;align-items:center;justify-content:flex-start;
+  font-size:11.5px;font-weight:600;letter-spacing:.06em;
+  padding:10px 0 8px;
+  transform-origin:100% 50%;
+  opacity:0;transform:translateX(30px) scale(.72);
+  transition:transform .34s var(--spring), opacity .18s ease, box-shadow .16s ease, filter .16s ease;
+}
+.edge-host.left .edge-tab{
+  right:auto;left:-4px;border-radius:0 7px 7px 0;transform-origin:0 50%;
+}
+.edge-deck.fanned .edge-tab{opacity:1}
+/* @keyframes 之外的倾斜：交替角度写在 CSS 里，JS 只切换 .fanned */
+.edge-deck.fanned .edge-tab:nth-child(4n+1){transform:rotate(3deg)}
+.edge-deck.fanned .edge-tab:nth-child(4n+2){transform:rotate(-3deg)}
+.edge-deck.fanned .edge-tab:nth-child(4n+3){transform:rotate(2.4deg)}
+.edge-deck.fanned .edge-tab:nth-child(4n+4){transform:rotate(-3deg)}
+.edge-host.left .edge-deck.fanned .edge-tab:nth-child(4n+1){transform:rotate(-3deg)}
+.edge-host.left .edge-deck.fanned .edge-tab:nth-child(4n+2){transform:rotate(2.2deg)}
+.edge-host.left .edge-deck.fanned .edge-tab:nth-child(4n+3){transform:rotate(-2.4deg)}
+.edge-host.left .edge-deck.fanned .edge-tab:nth-child(4n+4){transform:rotate(2deg)}
+.edge-tab:hover{
+  filter:brightness(1.06);
+  box-shadow:-8px 10px 22px rgba(0,0,0,.40), 0 1px 0 rgba(255,255,255,.4) inset;
+}
+.edge-tab.sel{filter:brightness(.97) saturate(1.06)}
+.edge-tab .ttl{
+  white-space:nowrap;overflow:hidden;max-height:88px;
+}
+.edge-tab.empty-hint{cursor:default}
+.edge-tab.empty-hint:hover{filter:none;box-shadow:-4px 6px 16px rgba(0,0,0,.32)}
+
+/* 抽出态：完整便签。右侧让出 34px 给仍在的签列，所以四角都是圆角；
+   不再"贴屏幕边"——贴边的是签列，不是这张纸 */
+.edge-note{
+  position:absolute;top:60px;width:300px;height:348px;
+  border-radius:16px;
+  box-shadow:-14px 18px 40px rgba(0,0,0,.34), 0 0 0 .5px rgba(0,0,0,.10);
+  display:none;flex-direction:column;padding:14px 14px 12px 16px;
+  opacity:0;transform:translateX(26px);
+  transition:opacity .18s ease, transform .3s var(--spring);
+}
+.edge-host:not(.left) .edge-note{right:34px}
+.edge-host.left .edge-note{
+  left:34px;padding:14px 16px 12px 14px;
+  box-shadow:14px 18px 40px rgba(0,0,0,.34), 0 0 0 .5px rgba(0,0,0,.10);
+}
+.edge-note.shown{display:flex;opacity:1;transform:none}
+
+/* 签列末尾的两颗圆钮：打开便签墙 / 新建。**扇开态就在**，不等点开便签才出现。
+   绝对定位，不参与 deck 的高度计算，否则静止态细条会被顶偏 */
+.edge-actions{
+  position:absolute;top:100%;right:0;margin-top:12px;
+  display:flex;flex-direction:column;align-items:center;gap:8px;
+  opacity:0;pointer-events:none;transform:translateX(8px);
+  transition:opacity .2s ease, transform .24s var(--spring);
+}
+.edge-host.left .edge-actions{right:auto;left:0}
+.edge-deck.fanned .edge-actions{opacity:1;pointer-events:auto;transform:none}
+.edge-actions .ea{
+  width:26px;height:26px;border-radius:50%;display:grid;place-items:center;
+  font-size:12px;line-height:1;color:#3a3a3e;
+  background:rgba(255,255,255,.84);border:1px solid rgba(0,0,0,.09);
+  box-shadow:-1px 2px 6px rgba(0,0,0,.18);cursor:pointer;
+  transition:transform .14s ease, background .14s ease;
+}
+.edge-actions .ea:hover{transform:scale(1.08);background:#fff}
+
+.note-head{display:flex;align-items:center;gap:7px;margin-bottom:10px}
+.note-tag{font-size:10.5px;font-weight:600;opacity:.62}
+.note-time{font-size:10px;opacity:.42;margin-left:auto}
+.note-x{
+  width:20px;height:20px;border-radius:50%;display:grid;place-items:center;
+  font-size:10px;font-weight:700;opacity:.5;background:rgba(0,0,0,.07);
+}
+.note-x:hover{opacity:.85}
+.note-editor{
+  flex:1;border:none;resize:none;outline:none;background:transparent;
+  font-size:13.5px;line-height:1.9;letter-spacing:.01em;
+}
+.note-saved{
+  font-size:10px;opacity:0;transition:opacity .25s ease;height:14px;
+  display:flex;align-items:center;gap:4px;
+}
+.note-saved.on{opacity:.55}
+
+/* 演示控制条 */
+.demo-controls{
+  display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;
+}
+.ctl{
+  padding:8px 14px;border-radius:99px;border:1px solid var(--line-2);
+  font-size:12.5px;color:var(--dim);background:var(--panel);
+  transition:all .16s ease;
+}
+.ctl:hover{color:var(--text);border-color:var(--accent);}
+.ctl.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.demo-readout{
+  margin-top:14px;font-size:12px;color:var(--dim-2);line-height:1.8;
+  border-left:2px solid var(--line-2);padding-left:12px;
+}
+.demo-readout code{
+  font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;
+  color:var(--accent);background:rgba(127,127,135,.10);padding:1px 6px;border-radius:5px;
+}
+
+/* ============================================================
+   Scene 2 · 三态规格
+   ============================================================ */
+.spec-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+.spec-card{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);
+  padding:20px 18px 16px;position:relative;
+}
+.spec-card h3{font-size:13px;font-weight:700;margin-bottom:4px}
+.spec-card .en{font-size:10px;color:var(--dim-2);letter-spacing:.08em;text-transform:uppercase}
+.spec-fig{
+  margin:16px auto 12px;position:relative;border-radius:10px;
+  background:
+    radial-gradient(100% 100% at 70% 20%, rgba(126,152,213,.25), transparent 60%),
+    linear-gradient(160deg,#2A2F49,#514560);
+  border:1px solid var(--line-2);
+}
+.spec-fig .pill{
+  position:absolute;right:0;top:50%;transform:translateY(-50%);
+  display:flex;flex-direction:column;gap:4px;align-items:center;
+  padding:7px 4px 7px 3.5px;border-radius:99px 0 0 99px;
+  background:rgba(18,18,22,.6);
+  border:1px solid rgba(255,255,255,.15);border-right:none;
+}
+.spec-fig .pill i{width:3.5px;height:11px;border-radius:2px;display:block}
+.spec-fig .tabs{position:absolute;right:0;top:34px;width:120px;height:170px}
+.spec-fig .mini-tab{
+  position:absolute;right:0;width:22px;height:88px;
+  border-radius:7px 0 0 7px;
+  writing-mode:vertical-rl;text-orientation:mixed;font-size:9.5px;font-weight:600;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:-4px 5px 12px rgba(0,0,0,.34);
+}
+.spec-fig .note-fig{
+  position:absolute;right:0;top:26px;width:96px;height:128px;
+  border-radius:9px 0 0 9px;
+  box-shadow:-12px 14px 30px rgba(0,0,0,.42);
+  display:flex;flex-direction:column;padding:8px 8px 8px 11px;gap:6px;
+}
+.spec-fig .note-fig .l{height:6px;border-radius:3px;background:rgba(0,0,0,.14)}
+.spec-fig .note-fig .l.w{width:70%}
+/* 抽出态的示意图：右侧仍在的签列 */
+.spec-fig .spec-tabs{position:absolute;right:0;top:60px;display:flex;flex-direction:column;gap:5px}
+.spec-fig .spec-tabs i{display:block;width:22px;height:38px;border-radius:5px 0 0 5px;opacity:.92;
+  box-shadow:-4px 5px 12px rgba(0,0,0,.3)}
+.spec-fig .n-label{position:absolute;font-size:10px;color:#fff;opacity:.75}
+.spec-list{font-size:12px;color:var(--dim);line-height:1.95;margin-top:6px}
+.spec-list b{color:var(--text)}
+.spec-list code{
+  font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--accent);
+}
+.timing{
+  margin-top:18px;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r-md);padding:18px 20px;
+}
+.timing h3{font-size:13px;font-weight:700;margin-bottom:10px}
+.tl{display:flex;flex-direction:column;gap:9px;font-size:12.5px;color:var(--dim)}
+.tl .row{display:flex;gap:12px;align-items:baseline}
+.tl .ms{
+  flex:0 0 92px;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--accent);
+}
+.tl .what b{color:var(--text)}
+
+/* ============================================================
+   Scene 3 · 模式与入口
+   ============================================================ */
+.mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.mode-card{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);
+  padding:20px;
+}
+.mode-card h3{font-size:14px;font-weight:700;display:flex;align-items:center;gap:8px}
+.mode-card .badge{
+  font-size:10px;font-weight:600;padding:3px 8px;border-radius:99px;
+  background:rgba(232,196,107,.14);color:var(--accent);
+}
+.mode-card p{font-size:12.5px;color:var(--dim);line-height:1.85;margin:10px 0 14px}
+.mode-card p b{color:var(--text)}
+.chip-row{display:flex;gap:6px;flex-wrap:wrap}
+.chip{
+  font-size:11px;padding:4px 10px;border-radius:99px;
+  background:var(--panel-2);border:1px solid var(--line);color:var(--dim);
+}
+
+/* 设置页 mockup */
+.settings-mock{
+  width:520px;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r-md);overflow:hidden;box-shadow:var(--win-shadow);
+}
+.settings-mock .s-head{
+  padding:14px 18px;font-size:13px;font-weight:700;
+  border-bottom:1px solid var(--line);display:flex;align-items:center;
+}
+.settings-mock .s-head span{margin-left:auto;font-size:11px;font-weight:400;color:var(--dim-2)}
+.s-group{padding:6px 18px 4px}
+.s-group .g-title{
+  font-size:10.5px;font-weight:700;color:var(--dim-2);letter-spacing:.05em;
+  text-transform:uppercase;padding:12px 0 4px;
+}
+.s-row{
+  display:flex;align-items:center;gap:12px;padding:11px 0;
+  border-bottom:1px solid var(--line);
+}
+.s-row:last-child{border-bottom:none}
+.s-row .t b{display:block;font-size:12.5px;font-weight:600}
+.s-row .t small{display:block;font-size:11px;color:var(--dim-2);margin-top:2px}
+.s-row .tail{margin-left:auto;font-size:12px;color:var(--dim)}
+.switch{
+  width:36px;height:21px;border-radius:99px;background:rgba(127,127,135,.35);
+  position:relative;transition:background .2s ease;flex:0 0 36px;
+}
+.switch.on{background:var(--accent)}
+.switch i{
+  position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .2s var(--spring);
+}
+.switch.on i{left:17px}
+.seg{display:flex;border:1px solid var(--line-2);border-radius:8px;overflow:hidden}
+.seg button{padding:4px 12px;font-size:11.5px;color:var(--dim)}
+.seg button.on{background:var(--accent);color:var(--accent-ink);font-weight:600}
+
+/* 卡片菜单 mockup */
+.menu-mock{
+  width:230px;background:rgba(28,28,32,.96);border:1px solid var(--line-2);
+  border-radius:10px;padding:5px;box-shadow:0 18px 44px rgba(0,0,0,.5);
+  backdrop-filter:blur(12px);
+}
+html[data-theme="light"] .menu-mock{background:rgba(252,252,250,.97)}
+.menu-mock .mi{
+  display:flex;align-items:center;padding:6px 11px;border-radius:6px;
+  font-size:12.5px;color:var(--text);
+}
+.menu-mock .mi.hot{background:var(--accent);color:var(--accent-ink);font-weight:600}
+.menu-mock .sep{height:1px;background:var(--line);margin:5px 8px}
+.menu-mock .mi .k{margin-left:auto;font-size:11px;opacity:.45}
+.menu-mock .mi.hot .k{opacity:.8}
+
+/* ============================================================
+   Scene 4 · 安全与边界
+   ============================================================ */
+.rules-list{display:flex;flex-direction:column;gap:12px}
+.rule{
+  display:flex;gap:14px;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r-md);padding:16px 18px;
+}
+.rule .ico{
+  flex:0 0 34px;height:34px;border-radius:9px;display:grid;place-items:center;
+  font-size:15px;background:var(--panel-2);border:1px solid var(--line);
+}
+.rule b{display:block;font-size:13px;font-weight:700;margin-bottom:4px}
+.rule p{font-size:12.5px;color:var(--dim);line-height:1.8}
+.rule p code{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--accent)}
+
+/* ============================================================
+   Scene 5 · 决策点
+   ============================================================ */
+.decisions{display:flex;flex-direction:column;gap:16px}
+.decision{
+  background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:var(--r-md);padding:20px 22px;
+}
+.decision .q{font-size:14px;font-weight:700;margin-bottom:8px}
+.decision .why{font-size:12.5px;color:var(--dim);line-height:1.8;margin-bottom:14px}
+.opts{display:flex;flex-direction:column;gap:8px}
+.opt{
+  display:flex;gap:12px;align-items:flex-start;padding:11px 14px;
+  border:1px solid var(--line);border-radius:10px;cursor:pointer;
+  transition:all .15s ease;
+}
+.opt:hover{border-color:var(--line-2);background:var(--panel-2)}
+.opt .mark{
+  flex:0 0 17px;height:17px;border-radius:50%;border:1.5px solid var(--dim-2);
+  margin-top:1px;position:relative;transition:all .15s ease;
+}
+.opt.sel .mark{border-color:var(--accent)}
+.opt.sel .mark::after{
+  content:"";position:absolute;inset:3px;border-radius:50%;background:var(--accent);
+}
+.opt b{display:block;font-size:13px;font-weight:600}
+.opt.sel b{color:var(--accent)}
+.opt small{display:block;font-size:11.5px;color:var(--dim);margin-top:3px;line-height:1.65}
+.opt .tag{
+  flex:0 0 auto;font-size:9.5px;font-weight:700;letter-spacing:.06em;
+  padding:2px 7px;border-radius:99px;margin-left:auto;
+  background:rgba(232,196,107,.13);color:var(--accent);
+}
+</style>
+</head>
+<body>
+<div class="viewer">
+  <aside class="rail">
+    <div class="brand">
+      <div class="brand-mark">墙</div>
+      <div><b>屏幕边缘条</b><small>Edge Deck · 原型 v0.1</small></div>
+    </div>
+    <button class="theme-toggle" id="themeBtn">☀︎ 切换浅色</button>
+    <nav class="scenes">
+      <button class="scene-btn active" data-scene="demo">
+        <span class="ico">🖱️</span>
+        <span><b>交互演示</b><small>亲手把三态玩一遍：悬停 → 扇开 → 抽出</small></span>
+      </button>
+      <button class="scene-btn" data-scene="spec">
+        <span class="ico">📐</span>
+        <span><b>三态规格</b><small>尺寸、时序、防误触的精确数字</small></span>
+      </button>
+      <button class="scene-btn" data-scene="modes">
+        <span class="ico">🗂️</span>
+        <span><b>模式与入口</b><small>最近 / 钉住两种模式，设置与卡片菜单</small></span>
+      </button>
+      <button class="scene-btn" data-scene="rules">
+        <span class="ico">🛡️</span>
+        <span><b>安全与边界</b><small>锁定便签、多屏、回收站怎么处理</small></span>
+      </button>
+      <button class="scene-btn" data-scene="decisions">
+        <span class="ico">❓</span>
+        <span><b>待定决策点</b><small>四个需要你拍板的问题（含推荐）</small></span>
+      </button>
+    </nav>
+    <div class="rail-foot">
+      参考：Noty 的边缘便签三态设计。<br>
+      本原型为方案定稿用，交互逻辑与正式实现一致。
+    </div>
+  </aside>
+
+  <main class="canvas"><div class="canvas-inner">
+
+  <!-- ================= Scene 1 · 交互演示 ================= -->
+  <section class="scene active" id="scene-demo">
+    <h1>交互演示<small>参考 Noty 的三态设计，结合便签墙的纸色体系</small></h1>
+    <p class="hint-line">
+      把鼠标移到 <b>桌面右边缘中间的细条</b> 上 → 纸签扇形展开 → <b>点一张签</b>，整张便签从原位抽出，可直接打字。<br>
+      扇开后<b>签列下方常驻两颗圆钮</b>：「打开便签墙」和「新建」；抽出时签列不会消失，点另一张直接换。<br>
+      注意三种形态<b>贴屏幕的那一侧始终是一条直线</b>，与边缘零缝隙，只向内侧生长。
+      演示中的「别人的应用」窗口不会被激活——边缘条借走键盘但不抢焦点。
+    </p>
+
+    <div class="desktop" id="desktop">
+      <!-- 假的宿主应用：正在打字，不被打断 -->
+      <div class="foreign">
+        <div class="fbar"><i></i><i></i><i></i><span>别人的应用 — 正在写周报</span></div>
+        <div class="fdoc">
+          本周进展：便签墙完成锁定加密与快捷键自定义，<span class="caret"></span><br>
+          <div class="ln w85"></div>
+          <div class="ln"></div>
+          <div class="ln w60"></div>
+        </div>
+      </div>
+
+      <!-- 边缘条宿主（真实交互） -->
+      <div class="edge-host" id="edgeHost">
+        <div class="edge-deck" id="edgeDeck">
+          <div class="edge-pill" id="edgePill"></div>
+          <div class="edge-tabs" id="edgeTabs"></div>
+          <div class="edge-actions" id="edgeActions">
+            <button class="ea" id="eaWall" title="打开便签墙">▣</button>
+            <button class="ea" id="eaNew" title="新建便签">＋</button>
+          </div>
+        </div>
+        <div class="edge-note" id="edgeNote">
+          <div class="note-head">
+            <span class="note-tag" id="noteTag">灵感</span>
+            <span class="note-time" id="noteTime">今天 09:12</span>
+            <button class="note-x" id="noteX">✕</button>
+          </div>
+          <textarea class="note-editor" id="noteEditor" spellcheck="false"></textarea>
+          <div class="note-saved" id="noteSaved">✓ 已写盘</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="demo-controls">
+      <button class="ctl" id="ctlSide">⇄ 停靠到左侧</button>
+      <button class="ctl on" id="ctlModeRecent">模式：最近编辑</button>
+      <button class="ctl" id="ctlModePinned">模式：手动钉住</button>
+      <button class="ctl" id="ctlCollapse">收拢细条</button>
+    </div>
+    <div class="demo-readout" id="readout">状态：<code>静止 rest</code> —— 鼠标进入细条即展开</div>
+  </section>
+
+  <!-- ================= Scene 2 · 三态规格 ================= -->
+  <section class="scene" id="scene-spec">
+    <h1>三态规格<small>Three states, one movement</small></h1>
+    <p class="hint-line">
+      一个由鼠标驱动的状态机：静止 → 扇开 → 抽出。所有尺寸为正式实现的点值。<br>
+      <b>铁律：贴屏幕的那一侧永远是直线、零缝隙</b>——三种形态都只向屏幕内侧生长，
+      倾斜与层次只发生在外侧边缘。
+    </p>
+
+    <div class="spec-grid">
+      <div class="spec-card">
+        <h3>① 静止 · 细条</h3><div class="en">Rest · Stripe</div>
+        <div class="spec-fig" style="height:236px">
+          <div class="pill">
+            <i style="background:var(--p-yellow)"></i><i style="background:var(--p-pink)"></i>
+            <i style="background:var(--p-blue)"></i><i style="background:var(--p-mint)"></i>
+            <i style="background:var(--p-purple)"></i>
+          </div>
+          <span class="n-label" style="left:10px;top:12px;background:rgba(0,0,0,.35);padding:1px 5px;border-radius:4px">12pt 胶囊</span>
+          <span class="n-label" style="left:10px;top:34px;background:rgba(0,0,0,.35);padding:1px 5px;border-radius:4px">贴边 · 内侧圆角</span>
+          <span class="n-label" style="left:10px;top:56px;background:rgba(0,0,0,.35);padding:1px 5px;border-radius:4px">每便签一色点</span>
+        </div>
+        <div class="spec-list">
+          <b>宽 12pt</b>，半透明深色胶囊（浅/深壁纸都压得住）<br>
+          <b>贴屏幕侧切平</b>，只有内侧有圆角——和边缘零缝隙<br>
+          每条便签一个 <code>4×14</code> 纸色点<br>
+          纵向居中，<b>高度只够装色点</b>——绝不整条边都拦截点击
+        </div>
+      </div>
+
+      <div class="spec-card">
+        <h3>② 悬停 · 扇开</h3><div class="en">Hover · Fan out</div>
+        <div class="spec-fig" style="height:236px">
+          <div class="tabs" style="top:16px;height:210px">
+            <div class="mini-tab" style="right:0;top:0;transform-origin:100% 50%;transform:rotate(3deg);background:var(--p-yellow);color:#2C2718">给设计稿</div>
+            <div class="mini-tab" style="right:0;top:56px;transform-origin:100% 50%;transform:rotate(-2.2deg);background:var(--p-blue);color:#1B2436">报价底线</div>
+            <div class="mini-tab" style="right:0;top:112px;transform-origin:100% 50%;transform:rotate(2.4deg);background:var(--p-mint);color:#1B2A22">周五前三件</div>
+          </div>
+          <span class="n-label" style="left:10px;top:12px;background:rgba(0,0,0,.35);padding:1px 5px;border-radius:4px">贴边齐平 · 28×104</span>
+          <span class="n-label" style="left:10px;top:34px;background:rgba(0,0,0,.35);padding:1px 5px;border-radius:4px">瓦片间距 64</span>
+          <span class="n-label" style="left:10px;top:56px;background:rgba(0,0,0,.35);padding:1px 5px;border-radius:4px">右缘方角 · 零缝隙</span>
+        </div>
+        <div class="spec-list">
+          纸签 <code>28×104</code>，纸色填充，<b>中文竖排</b>标题（非旋转）<br>
+          <b>贴屏幕侧是一条死直线</b>：右缘方角、齐平、零缝隙<br>
+          倾斜轴钉在贴边线上（<code>±3°</code>），只有<b>内缘伸错</b>像一叠纸<br>
+          级联出现：每张延迟 <code>45ms</code>，弹簧曲线；高度不够自动减签<br>
+          底部<b>常驻</b> <code>▣</code> 打开便签墙 / <code>＋</code> 新建——不等点开便签才出现
+        </div>
+      </div>
+
+      <div class="spec-card">
+        <h3>③ 点击 · 抽出</h3><div class="en">Click · Pull out</div>
+        <div class="spec-fig" style="height:236px">
+          <div class="note-fig" style="background:var(--p-yellow);top:60px;right:34px;border-radius:14px">
+            <div class="l"></div><div class="l"></div><div class="l w"></div>
+            <div class="l"></div><div class="l w"></div><div class="l"></div>
+          </div>
+          <div class="spec-tabs">
+            <i style="background:var(--p-blue)"></i>
+            <i style="background:var(--p-yellow)"></i>
+            <i style="background:var(--p-green)"></i>
+          </div>
+          <span class="n-label" style="left:10px;top:12px;background:rgba(0,0,0,.42);padding:1px 5px;border-radius:4px">右侧签列不消失</span>
+          <span class="n-label" style="left:10px;top:34px;background:rgba(0,0,0,.42);padding:1px 5px;border-radius:4px">底部两颗圆钮</span>
+        </div>
+        <div class="spec-list">
+          <code>330×248–420</code>（随内容；屏幕矮则压缩）<br>
+          <b>四角圆角</b>——贴边的是签列，不是这张纸<br>
+          <b>签列仍在</b>：被抽出的那张扶正并打墨线，点另一张直接换<br>
+          底部 <code>▣</code> 打开便签墙、<code>＋</code> 新建（同一个捕获面板）<br>
+          纵向对齐那张签；不激活 App（如 Spotlight）
+        </div>
+      </div>
+    </div>
+
+    <div class="timing">
+      <h3>时序与防误触</h3>
+      <div class="tl">
+        <div class="row"><span class="ms">0 ms</span><span class="what"><b>指针进入细条</b> → 立即开始扇开（唯一主动触发，不设延迟：来都来了）</span></div>
+        <div class="row"><span class="ms">45 ms × n</span><span class="what">第 n 张签的级联延迟，整套展开约 <b>0.3s</b></span></div>
+        <div class="row"><span class="ms">320 ms</span><span class="what"><b>指针离开后延迟 320ms 才收拢</b>——防止在签和屏幕边之间来回扫时闪烁（Noty 同款节奏）</span></div>
+        <div class="row"><span class="ms">280 ms</span><span class="what">点击签 → 抽出面板弹簧滑入，从签的纵向位置出发</span></div>
+        <div class="row"><span class="ms">250 ms</span><span class="what">打字停手 250ms 后写盘（记的是「你停下来」，不是每个按键）</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="scene" id="scene-modes">
+    <h1>模式与入口<small>哪些便签会出现在边缘上</small></h1>
+    <p class="hint-line">
+      你定的方向：<b>两种模式都要</b>——既能自动看最新的，也能专门钉几张常驻。
+    </p>
+
+    <div class="mode-grid">
+      <div class="mode-card">
+        <h3>最近模式 <span class="badge">自动</span></h3>
+        <p>
+          按 <b>最近编辑时间</b>自动取前 N 张（默认 8，可设 4–12）。零管理成本，
+          每次顺手记一条、改一句，它就在边缘上。编辑让它浮到最上面，不动的慢慢沉下去。
+        </p>
+        <div class="chip-row">
+          <span class="chip">updatedAt 排序</span>
+          <span class="chip">上限可调 4/6/8/10/12</span>
+          <span class="chip">锁定自动消失</span>
+        </div>
+      </div>
+      <div class="mode-card">
+        <h3>钉住模式 <span class="badge">手动</span></h3>
+        <p>
+          只显示你<b>逐张钉上去</b>的便签，按钉的时间从早到晚排列。
+          适合「这周每天都看」的那几张：报价底线、部署步骤、周报模板。
+          钉/取消钉在<b>卡片「⋯」菜单</b>里，可撤销。
+        </p>
+        <div class="chip-row">
+          <span class="chip">卡片菜单钉住</span>
+          <span class="chip">⌘Z 可撤销</span>
+          <span class="chip">空态有引导</span>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="sec">设置页新增「屏幕边缘」组<small>位于「快捷键」与「安全」之间</small></h2>
+    <div class="settings-mock">
+      <div class="s-head">设置<span>ⓘ</span></div>
+      <div class="s-group">
+        <div class="g-title">屏幕边缘</div>
+        <div class="s-row">
+          <div class="t"><b>边缘便签条</b><small>常驻屏幕边缘，鼠标移过去展开成纸签</small></div>
+          <div class="tail"><div class="switch on" id="mockSwitch"><i></i></div></div>
+        </div>
+        <div class="s-row">
+          <div class="t"><b>停靠侧</b><small>细条贴在屏幕哪一边（也可右键边缘条换边）</small></div>
+          <div class="tail"><div class="seg"><button>左侧</button><button class="on">右侧</button></div></div>
+        </div>
+        <div class="s-row">
+          <div class="t"><b>显示内容</b><small>最近模式自动跟随编辑；钉住模式由你逐张控制</small></div>
+          <div class="tail"><div class="seg"><button class="on">最近编辑</button><button>手动钉住</button></div></div>
+        </div>
+        <div class="s-row">
+          <div class="t"><b>显示条数</b><small>最近模式下最多显示几张（钉住模式不受限）</small></div>
+          <div class="tail"><div class="seg"><button>4</button><button>6</button><button class="on">8</button><button>10</button><button>12</button></div></div>
+        </div>
+      </div>
+    </div>
+    <p class="body" style="margin-top:10px">锁定的便签与回收站里的便签永远不会出现在边缘条上。</p>
+
+    <h2 class="sec">卡片菜单入口<small>「⋯」菜单与右键菜单同源，加一项</small></h2>
+    <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+      <div class="menu-mock">
+        <div class="mi">打开</div>
+        <div class="mi">置顶</div>
+        <div class="mi">移动到墙 ▸</div>
+        <div class="mi hot">钉到屏幕边缘 <span class="k">已在边缘</span></div>
+        <div class="sep"></div>
+        <div class="mi">锁定…</div>
+        <div class="mi">复制文字</div>
+        <div class="sep"></div>
+        <div class="mi">删除</div>
+      </div>
+      <p class="body" style="max-width:420px">
+        已钉住的便签这一项变为<b>「从边缘移除」</b>；<b>锁定的便签不显示这一项</b>——
+        锁上那一刻它就会从边缘条上消失，解锁后（若在钉住模式且被钉过）再回来。
+        菜单栏图标下拉里同步提供「屏幕边缘条」开关，不开主窗口也能控制。
+      </p>
+    </div>
+  </section>
+
+  <!-- ================= Scene 4 · 安全与边界 ================= -->
+  <section class="scene" id="scene-rules">
+    <h1>安全与边界<small>把丑话说在前面</small></h1>
+    <p class="hint-line">边缘条是把内容<b>直接画在屏幕上</b>的组件，安全规则必须比主窗口更严。</p>
+
+    <div class="rules-list">
+      <div class="rule"><div class="ico">🔒</div><div>
+        <b>锁定的便签绝不进边缘条</b>
+        <p>锁定的便签正文与图片在磁盘上是密文（AES-GCM），但边缘条要展示内容就必须持有明文。
+        规则：锁定那一刻立即从边缘条消失；<code>edgeNotes</code> 计算属性硬性排除 <code>isLocked</code>，
+        不是靠 UI 层「不显示」——数据层就不给。解锁定时器到期时若正被抽出展示，面板立即关闭。</p>
+      </div></div>
+      <div class="rule"><div class="ico">🗑️</div><div>
+        <b>回收站与空便签不进边缘条</b>
+        <p>进了回收站的便签（<code>deletedAt ≠ nil</code>）和没有内容的便签同样被排除。
+        彻底删除的便签若正被抽出展示，面板立即关闭，不留一张「孤纸」。</p>
+      </div></div>
+      <div class="rule"><div class="ico">⌨️</div><div>
+        <b>不抢焦点，但借键盘</b>
+        <p>边缘条与抽出面板都是 <code>nonactivatingPanel</code>：点击纸签不会把便签墙提到前台，
+        你正在写的周报窗口保持激活——光标却已落在抽出面板里，可直接打字（与 ⌥Space 捕获面板同一机制）。
+        <code>Esc</code> 收回、点面板外收回、右上角 ✕ 收回。</p>
+      </div></div>
+      <div class="rule"><div class="ico">🖥️</div><div>
+        <b>多屏与换屏</b>
+        <p>首版只在<b>主屏</b>停靠一条。插拔屏幕（<code>didChangeScreenParameters</code>）时重新定位并校验可见性。
+        「每屏一条」是多屏用户的需求，留到后续版本——先把一条做稳。</p>
+      </div></div>
+      <div class="rule"><div class="ico">✍️</div><div>
+        <b>编辑防抖与锁定竞态</b>
+        <p>抽出面板的编辑不直接绑存档：正文改动在本地暂存，停手 <code>250ms</code> 后写回，
+        写回时<b>重新校验锁定态</b>——如果这 250ms 里便签被自动上锁了，就丢弃这次写入，
+        绝不能把明文塞进已加密的便签里。</p>
+      </div></div>
+      <div class="rule"><div class="ico">⚡</div><div>
+        <b>与捕获面板、刘海的关系</b>
+        <p>边缘条纵向居中，避开刘海与两翼入口的顶部区域；层级与捕获面板同为 floating，
+        互不遮挡（一个在屏幕中央、一个在边缘）。⌥Space 的全局快捷键不受影响。</p>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- ================= Scene 5 · 待定决策点 ================= -->
+  <section class="scene" id="scene-decisions">
+    <h1>待定决策点<small>四个问题，每个都给了推荐</small></h1>
+    <p class="hint-line">点选你认为对的选项（仅为记录倾向，最终以你的答复为准）。</p>
+
+    <div class="decisions">
+      <div class="decision">
+        <div class="q">D1 · 「最近」和「钉住」怎么共存？</div>
+        <p class="why">你之前说"既能查看最新的，又能查看我专门让它显示在那里的"。落成产品有两条路：</p>
+        <div class="opts">
+          <div class="opt sel" data-d="1a">
+            <span class="mark"></span>
+            <span><b>两个独立模式，可切换（默认「最近」</b><small>右键边缘条或设置里切换。心智简单：边缘条现在"是什么模式"很明确；两种内容不会互相挤占。</small></span>
+            <span class="tag">推荐 · 贴合原话</span>
+          </div>
+          <div class="opt" data-d="1b">
+            <span class="mark"></span>
+            <span><b>单一混合模式：钉住的排前面，其余位置用最近编辑补足</b><small>不用切换，两种内容同时在场；但"补足"意味着钉住的会挤掉最新的，边缘条内容混合后不好预期。</small></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="decision">
+        <div class="q">D2 · 边缘条默认开还是关？</div>
+        <div class="opts">
+          <div class="opt" data-d="2a">
+            <span class="mark"></span>
+            <span><b>升级后默认关闭，设置里开启</b><small>保守。老用户桌面右缘突然多一条东西，可能被当成"又来一个常驻组件"。</small></span>
+          </div>
+          <div class="opt sel" data-d="2b">
+            <span class="mark"></span>
+            <span><b>默认开启（首次启动时 Toast 提示一句"边缘条已就位，鼠标移过去看看"）</b><small>功能的全部价值在"被发现"。一条 12pt 细条的存在感极低，打扰成本接近零，而关闭它只要一次右键。</small></span>
+            <span class="tag">推荐</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="decision">
+        <div class="q">D3 · 钉住模式下没钉任何便签时，边缘条显示什么？</div>
+        <div class="opts">
+          <div class="opt sel" data-d="3a">
+            <span class="mark"></span>
+            <span><b>显示一张米白色"空签"，竖排写着"还没有钉住的便签 · 在卡片菜单里钉一张"</b><small>边缘条的存在感靠持续可见；空态是唯一的引导入口，藏着等于让用户自己猜。</small></span>
+            <span class="tag">推荐</span>
+          </div>
+          <div class="opt" data-d="3b">
+            <span class="mark"></span>
+            <span><b>完全隐藏，钉了第一张才出现</b><small>更干净，但"切到钉住模式后边缘条不见了"容易被当成 bug。</small></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="decision">
+        <div class="q">D4 · 抽出面板的编辑范围？</div>
+        <div class="opts">
+          <div class="opt sel" data-d="4a">
+            <span class="mark"></span>
+            <span><b>纯文本编辑（正文 + 清单勾选语法照常可打）</b><small>边缘场景追求快进快出，改一句话就走。图片展示但不在面板里换图；换纸色/标签/换墙这些低频操作回主窗口。</small></span>
+            <span class="tag">推荐 · 首版</span>
+          </div>
+          <div class="opt" data-d="4b">
+            <span class="mark"></span>
+            <span><b>完整编辑：换纸色、改标签、勾选框可点、清单 Enter 续行</b><small>面板变高变复杂，接近把主窗口搬过来；这些能力目前主窗口也还没有（Enter 续行在待办清单里）。</small></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="body" style="margin-top:26px">
+      定稿后按既定任务开发：EdgeDeck.swift（三态控制器）→ Store 接入 → 菜单与设置 → 断言 + 打包 0.7。
+    </p>
+  </section>
+
+  </div></main>
+</div>
+
+<script>
+/* ============================================================
+   场景切换 & 主题
+   ============================================================ */
+document.querySelectorAll('.scene-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.scene-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.scene').forEach(s=>s.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('scene-'+btn.dataset.scene).classList.add('active');
+  });
+});
+const themeBtn=document.getElementById('themeBtn');
+themeBtn.addEventListener('click',()=>{
+  const html=document.documentElement;
+  const light=html.dataset.theme==='light';
+  html.dataset.theme=light?'dark':'light';
+  document.getElementById('desktop').classList.toggle('light-bg',light);
+  themeBtn.textContent=light?'☀︎ 切换浅色':'☾ 切换深色';
+});
+
+/* ============================================================
+   Scene 1 · 三态交互演示
+   ============================================================ */
+const NOTES=[
+  {id:1,paper:'yellow',ink:'#2C2718',title:'给设计稿加标注',tag:'待办',time:'今天 09:12',
+   text:'给设计稿加标注：\n1. 首页的 CTA 改成金色的\n2. 卡片圆角统一 16\n3. 深色模式下的分隔线再淡一点',pinned:false},
+  {id:2,paper:'blue',ink:'#1B2436',title:'报价底线',tag:'资料',time:'昨天 16:40',
+   text:'客户那边的报价底线是 18 万，超过就要走二次审批。\n超过 20 万必须拉总监进会。',pinned:true},
+  {id:3,paper:'mint',ink:'#1B2A22',title:'周五前三件事',tag:'待办',time:'昨天 11:05',
+   text:'- [x] 给设计稿加标注\n- [ ] 改完原型里的三段文案\n- [ ] 把导出功能列进 v1.2',pinned:false},
+  {id:4,paper:'pink',ink:'#2E1F25',title:'便签不需要更聪明',tag:'想法',time:'3 天前',
+   text:'便签不需要更聪明，只需要更快出现。\n这句话应该贴在墙上。',pinned:false},
+  {id:5,paper:'cream',ink:'#2A241C',title:'装环境一条命令',tag:'资料',time:'6 天前',
+   text:'新机器装环境，一条命令跑完：\nbrew install --cask raycast rectangle arc',pinned:true},
+  {id:6,paper:'purple',ink:'#251F30',title:'新机器装环境',tag:'灵感',time:'9 天前',
+   text:'把部署步骤钉在边缘上，每次发版扫一眼就行。',pinned:false},
+];
+const PAPER={yellow:'#F7E7A6',pink:'#F4D2DC',blue:'#CFE0F7',mint:'#D2EDDC',purple:'#E2D8F5',cream:'#F0E8DA'};
+
+let mode='recent', side='right';
+let collapseTimer=null, saveTimer=null;
+
+const host=document.getElementById('edgeHost');
+const deck=document.getElementById('edgeDeck');
+const pill=document.getElementById('edgePill');
+const tabsEl=document.getElementById('edgeTabs');
+const noteEl=document.getElementById('edgeNote');
+const editor=document.getElementById('noteEditor');
+const savedEl=document.getElementById('noteSaved');
+const readout=document.getElementById('readout');
+
+function currentNotes(){
+  return mode==='pinned' ? NOTES.filter(n=>n.pinned) : NOTES.slice(0,8);
+}
+function say(html){readout.innerHTML='状态：'+html;}
+
+function renderPill(){
+  pill.innerHTML='';
+  currentNotes().forEach(n=>{
+    const i=document.createElement('i');
+    i.className='dash';i.style.background=PAPER[n.paper];
+    pill.appendChild(i);
+  });
+  if(currentNotes().length===0){
+    pill.innerHTML='<i class="dash" style="background:#F0E8DA;opacity:.7"></i>';
+  }
+}
+
+function renderTabs(){
+  tabsEl.innerHTML='';
+  const notes=currentNotes();
+  if(notes.length===0){
+    const t=document.createElement('div');
+    t.className='edge-tab empty-hint';
+    t.style.background=PAPER.cream;t.style.color='#2A241C';t.style.top='0px';
+    t.textContent='还没有钉住的便签 · 在卡片菜单里钉一张';
+    tabsEl.appendChild(t);
+    tabsEl.style.height='104px';
+    return;
+  }
+  notes.forEach((n,idx)=>{
+    const t=document.createElement('div');
+    t.className='edge-tab';
+    t.style.background=PAPER[n.paper];t.style.color=n.ink;
+    t.style.top=(idx*64)+'px';
+    t.style.transitionDelay=(idx*45)+'ms';
+    // 倾斜角度由 CSS nth-child 决定（贴边侧为旋转轴），这里只管位置与级联延迟
+    t.innerHTML='<span class="ttl">'+n.title.slice(0,4)+'</span>';
+    t.addEventListener('click',e=>{e.stopPropagation();openNote(n,idx);});
+    tabsEl.appendChild(t);
+  });
+  tabsEl.style.height=(112+(notes.length-1)*64)+'px';
+}
+
+function layoutTabs(){} // 倾斜完全交给 CSS，保留空函数只为兼容调用点
+
+function fan(){
+  clearTimeout(collapseTimer);
+  if(deck.classList.contains('fanned')) return;
+  deck.classList.add('fanned');
+  requestAnimationFrame(()=>requestAnimationFrame(layoutTabs));
+  say('<code>扇开 fan</code> —— 点击一张纸签把它抽出来');
+}
+function rest(){
+  if(noteEl.classList.contains('shown')) return; // 抽出面板开着时保持展开
+  deck.classList.remove('fanned');
+  tabsEl.querySelectorAll('.edge-tab').forEach(t=>{t.style.transitionDelay='0ms';});
+  say('<code>收拢 rest</code> —— 鼠标进入细条再次展开');
+}
+
+deck.addEventListener('mouseenter',fan);
+deck.addEventListener('mouseleave',()=>{
+  clearTimeout(collapseTimer);
+  collapseTimer=setTimeout(rest,320);
+});
+
+function openNote(n,idx){
+  noteEl.style.background=PAPER[n.paper];
+  noteEl.style.color=n.ink;
+  document.getElementById('noteTag').textContent=n.tag;
+  document.getElementById('noteTag').style.color=n.ink;
+  document.getElementById('noteTime').textContent=n.time;
+  document.getElementById('noteTime').style.color=n.ink;
+  document.getElementById('noteX').style.color=n.ink;
+  editor.style.color=n.ink;
+  editor.value=n.text;
+  savedEl.style.color=n.ink;
+  savedEl.classList.remove('on');
+  const lines=n.text.split('\n').length;
+  const h=Math.min(400, Math.max(248, 118 + lines*30));
+  noteEl.style.height=h+'px';
+  // 面板顶部对齐它原来那张签：视觉上"从这一列里抽出来"，不是凭空冒出一张卡。
+  // 注意不能拿 deck.offsetTop 算——deck 有 translateY(-50%)，offsetTop 不含 transform。
+  const hr=host.getBoundingClientRect(), tr=tabsEl.getBoundingClientRect();
+  noteEl.style.top=Math.max(8, tr.top-hr.top+idx*64+6)+'px';
+  noteEl.classList.add('shown');
+  host.classList.add('pulling');
+  tabsEl.querySelectorAll('.edge-tab').forEach(t=>t.classList.remove('sel'));
+  const list=tabsEl.querySelectorAll('.edge-tab');
+  if(list[idx]) list[idx].classList.add('sel');
+  editor.focus();
+  say('<code>抽出 pull-out</code> —— 签列还在，点另一张直接换；停手 250ms 自动写盘');
+}
+function closeNote(){
+  noteEl.classList.remove('shown');
+  host.classList.remove('pulling');
+  say('<code>收起</code> —— 抽出面板关闭，回到扇开');
+}
+document.getElementById('noteX').addEventListener('click',closeNote);
+document.getElementById('eaWall').addEventListener('click',e=>{
+  e.stopPropagation();
+  say('<code>打开便签墙</code> —— 正式实现里唤起主窗口并收起边缘条');
+});
+document.getElementById('eaNew').addEventListener('click',e=>{
+  e.stopPropagation();
+  say('<code>新建便签</code> —— 与 ⌥Space 同一个捕获面板，不另造流程');
+});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeNote();});
+document.getElementById('desktop').addEventListener('mousedown',e=>{
+  if(noteEl.classList.contains('shown') && !noteEl.contains(e.target)) closeNote();
+});
+
+editor.addEventListener('input',()=>{
+  savedEl.classList.remove('on');
+  clearTimeout(saveTimer);
+  saveTimer=setTimeout(()=>{
+    savedEl.classList.add('on');
+    const n=NOTES.find(x=>x.text!==undefined && editor.value && x.title===document.getElementById('noteTag').textContent);
+    setTimeout(()=>savedEl.classList.remove('on'),900);
+  },250);
+});
+
+/* 演示控制 */
+document.getElementById('ctlSide').addEventListener('click',function(){
+  side=side==='right'?'left':'right';
+  host.classList.toggle('left',side==='left');
+  this.textContent=side==='right'?'⇄ 停靠到左侧':'⇄ 停靠到右侧';
+  say('已换边到<b>'+(side==='right'?'右':'左')+'</b>（细条右键菜单里也有这项）');
+});
+const btnR=document.getElementById('ctlModeRecent'),btnP=document.getElementById('ctlModePinned');
+btnR.addEventListener('click',()=>{mode='recent';btnR.classList.add('on');btnP.classList.remove('on');refresh();});
+btnP.addEventListener('click',()=>{mode='pinned';btnP.classList.add('on');btnR.classList.remove('on');refresh();});
+document.getElementById('ctlCollapse').addEventListener('click',()=>{closeNote();rest();});
+function refresh(){
+  renderPill();renderTabs();
+  if(deck.classList.contains('fanned'))requestAnimationFrame(()=>requestAnimationFrame(layoutTabs));
+}
+
+/* 右键菜单（自绘） */
+let ctxMenu=null;
+host.addEventListener('contextmenu',e=>{
+  e.preventDefault();
+  if(ctxMenu)ctxMenu.remove();
+  ctxMenu=document.createElement('div');
+  ctxMenu.className='menu-mock';
+  ctxMenu.style.cssText='position:fixed;z-index:99;left:'+(e.clientX-100)+'px;top:'+e.clientY+'px';
+  const items=mode==='recent'
+    ?[['改显示钉住的','mode'],['停靠到'+(side==='right'?'左侧':'右侧'),'side']]
+    :[['改显示最近编辑','mode'],['停靠到'+(side==='right'?'左侧':'右侧'),'side']];
+  items.forEach(([label,act])=>{
+    const mi=document.createElement('div');mi.className='mi';mi.textContent=label;
+    mi.addEventListener('click',()=>{
+      if(act==='mode'){(mode==='recent'?btnP:btnR).click();}
+      else{document.getElementById('ctlSide').click();}
+      ctxMenu.remove();ctxMenu=null;
+    });
+    ctxMenu.appendChild(mi);
+  });
+  const sep=document.createElement('div');sep.className='sep';ctxMenu.appendChild(sep);
+  const mi=document.createElement('div');mi.className='mi';mi.textContent='打开便签墙';
+  mi.addEventListener('click',()=>{ctxMenu.remove();ctxMenu=null;});
+  ctxMenu.appendChild(mi);
+  document.body.appendChild(ctxMenu);
+});
+document.addEventListener('mousedown',e=>{if(ctxMenu&&!ctxMenu.contains(e.target)){ctxMenu.remove();ctxMenu=null;}});
+
+/* 决策点倾向记录 */
+document.querySelectorAll('.opt').forEach(o=>{
+  o.addEventListener('click',()=>{
+    o.parentElement.querySelectorAll('.opt').forEach(x=>x.classList.remove('sel'));
+    o.classList.add('sel');
+  });
+});
+/* 设置 mock 的开关 */
+document.getElementById('mockSwitch').addEventListener('click',function(){
+  this.classList.toggle('on');
+});
+
+renderPill();renderTabs();
+
+/* 支持 #spec 这类直链，方便截图与评审时直接定位到某一页 */
+(function(){
+  const h=location.hash.replace('#','');
+  if(!h) return;
+  const btn=document.querySelector('.scene-btn[data-scene="'+h+'"]');
+  if(btn) btn.click();
+})();
+
+/* 截图/评审用：?state=fan|note 直接进到对应状态，免去模拟鼠标 */
+(function(){
+  const q=new URLSearchParams(location.search).get('state');
+  if(!q) return;
+  fan();
+  if(q==='note') setTimeout(()=>openNote(currentNotes()[0],0),700);
+})();  /* stats-marker */
+</script>
+</body>
+</html>

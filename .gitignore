@@ -1,0 +1,24 @@
+.DS_Store
+.build/
+.swiftpm/
+*.app/
+/.workbuddy/
+
+# 保留文档引用和代表性截图，忽略其余本地调试截图。
+/NoteWall/shots/**
+!/NoteWall/shots/wall.png
+!/NoteWall/shots/wall-dark.png
+!/NoteWall/shots/capture.png
+!/NoteWall/shots/detail.png
+!/NoteWall/shots/settings.png
+!/NoteWall/shots/edge-cursor-tab2.png
+!/NoteWall/shots/edge-cursor-tab4.png
+!/NoteWall/shots/cursor.png
+!/NoteWall/shots/placeholder-align.png
+!/NoteWall/shots/notch-ratio.png
+!/NoteWall/shots/icon-preview.png
+!/NoteWall/shots/menubar/
+!/NoteWall/shots/menubar/design-fill-sheet.png
+!/NoteWall/shots/menubar/live-1x.png
+!/NoteWall/shots/menubar/live-2x.png
+!/NoteWall/shots/menubar/live-3x.png

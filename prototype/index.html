@@ -1,0 +1,1544 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>便签墙 · 高保真原型 v0.1</title>
+<style>
+/* ============================================================
+   Design tokens
+   ============================================================ */
+:root{
+  --bg:#0A0A0C;
+  --rail:#0E0E11;
+  --panel:#121215;
+  --panel-2:#17171B;
+  --elev:#1D1D22;
+  --text:#F3F3F5;
+  --dim:rgba(243,243,245,.52);
+  --dim-2:rgba(243,243,245,.30);
+  --line:rgba(255,255,255,.075);
+  --line-2:rgba(255,255,255,.12);
+  --accent:#E8C46B;
+  --accent-ink:#2A2415;
+  --win-shadow:0 50px 110px rgba(0,0,0,.62), 0 0 0 .5px rgba(255,255,255,.10);
+  --paper-shadow:0 8px 22px rgba(0,0,0,.28), 0 1px 0 rgba(255,255,255,.45) inset;
+  --r-lg:16px; --r-md:12px; --r-sm:8px;
+  --spring:cubic-bezier(.34,1.36,.44,1);
+}
+html[data-theme="light"]{
+  --bg:#E9E7E2;
+  --rail:#F4F2EE;
+  --panel:#FFFFFF;
+  --panel-2:#F7F5F1;
+  --elev:#FFFFFF;
+  --text:#1B1A18;
+  --dim:rgba(27,26,24,.56);
+  --dim-2:rgba(27,26,24,.34);
+  --line:rgba(0,0,0,.08);
+  --line-2:rgba(0,0,0,.13);
+  --win-shadow:0 40px 90px rgba(60,50,35,.16), 0 0 0 .5px rgba(0,0,0,.08);
+  --paper-shadow:0 6px 18px rgba(80,64,40,.14), 0 1px 0 rgba(255,255,255,.6) inset;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg);color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  overflow:hidden;
+}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,textarea{font:inherit;color:inherit;background:none;border:none;outline:none;resize:none}
+svg{display:block}
+
+/* ============================================================
+   Viewer chrome
+   ============================================================ */
+.viewer{display:flex;height:100vh}
+.rail{
+  width:248px;flex:0 0 248px;background:var(--rail);
+  border-right:1px solid var(--line);
+  display:flex;flex-direction:column;padding:22px 14px 16px;
+}
+.brand{display:flex;gap:10px;align-items:center;padding:0 8px 20px}
+.brand-mark{
+  width:30px;height:30px;border-radius:9px;flex:0 0 30px;
+  background:linear-gradient(150deg,#F7E7A6,#E9C46A 55%,#D9AE4E);
+  box-shadow:0 4px 10px rgba(233,196,106,.28), 0 1px 0 rgba(255,255,255,.6) inset;
+  display:grid;place-items:center;color:#3A2E12;font-size:14px;font-weight:700;
+}
+.brand b{display:block;font-size:14px;font-weight:600;letter-spacing:-.01em}
+.brand small{display:block;font-size:11px;color:var(--dim-2);margin-top:1px}
+
+.scenes{display:flex;flex-direction:column;gap:2px;overflow-y:auto}
+.scene-btn{
+  display:flex;gap:10px;align-items:flex-start;text-align:left;
+  padding:9px 10px;border-radius:9px;transition:background .16s ease;
+}
+.scene-btn:hover{background:rgba(127,127,135,.10)}
+.scene-btn.active{background:rgba(127,127,135,.16)}
+.scene-btn i{
+  font-style:normal;font-size:10px;font-weight:600;color:var(--dim-2);
+  font-variant-numeric:tabular-nums;padding-top:2px;letter-spacing:.04em;
+}
+.scene-btn.active i{color:var(--accent)}
+.scene-btn span{font-size:12.5px;line-height:1.35;font-weight:500}
+.scene-btn em{
+  display:block;font-style:normal;font-size:10.5px;font-weight:400;
+  color:var(--dim-2);margin-top:1px;
+}
+.rail-foot{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:10px}
+.theme-btn{
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  height:32px;border-radius:8px;background:rgba(127,127,135,.12);
+  font-size:12px;color:var(--dim);transition:.16s;
+}
+.theme-btn:hover{color:var(--text);background:rgba(127,127,135,.2)}
+.hint{font-size:10.5px;color:var(--dim-2);text-align:center;line-height:1.6}
+kbd{
+  font-family:inherit;font-size:10px;padding:1px 4px;border-radius:4px;
+  background:rgba(127,127,135,.16);border:1px solid var(--line-2);
+}
+
+.stage{
+  flex:1;min-width:0;display:grid;place-items:center;overflow:hidden;
+  background:
+    radial-gradient(900px 500px at 22% -10%, rgba(233,196,106,.055), transparent 62%),
+    radial-gradient(760px 460px at 88% 108%, rgba(120,150,220,.07), transparent 60%),
+    var(--bg);
+  padding:24px;
+}
+.frame-wrap{position:relative}
+.frame{position:absolute;top:0;left:0;width:1180px;height:760px;transform-origin:top left}
+.scene{position:absolute;inset:0;opacity:0;pointer-events:none;transition:opacity .22s ease}
+html.no-anim *,html.no-anim *::before,html.no-anim *::after{transition:none!important;animation:none!important}
+.scene.active{opacity:1;pointer-events:auto}
+
+/* ============================================================
+   macOS window shell
+   ============================================================ */
+.win{
+  width:100%;height:100%;border-radius:14px;overflow:hidden;
+  background:var(--panel);box-shadow:var(--win-shadow);
+  display:flex;flex-direction:column;
+  border:.5px solid var(--line-2);
+}
+.titlebar{
+  height:44px;flex:0 0 44px;display:flex;align-items:center;gap:10px;
+  padding:0 16px;background:var(--panel-2);
+  border-bottom:1px solid var(--line);
+}
+.lights{display:flex;gap:8px}
+.lights i{width:11px;height:11px;border-radius:50%;display:block}
+.lights i:nth-child(1){background:#FF5F57}
+.lights i:nth-child(2){background:#FEBC2E}
+.lights i:nth-child(3){background:#28C840}
+.tb-title{
+  flex:1;text-align:center;font-size:12.5px;font-weight:500;
+  color:var(--dim);letter-spacing:.01em;
+}
+.tb-right{width:64px;text-align:right;font-size:11px;color:var(--dim-2)}
+
+/* ============================================================
+   01 · Wall
+   ============================================================ */
+.win-body{padding:26px 30px 0;display:flex;flex-direction:column;min-height:0;flex:1}
+.wall-head{display:flex;justify-content:space-between;align-items:flex-start;gap:24px}
+.wall-head h1{font-size:26px;font-weight:650;letter-spacing:-.028em;line-height:1.1}
+.wall-head p{font-size:12.5px;color:var(--dim-2);margin-top:6px;letter-spacing:.01em}
+.head-tools{display:flex;align-items:center;gap:12px;padding-top:3px}
+.search{
+  display:flex;align-items:center;gap:7px;height:34px;padding:0 11px;
+  width:238px;border-radius:9px;background:rgba(127,127,135,.11);
+  border:1px solid transparent;transition:.18s;
+}
+.search:focus-within{border-color:rgba(233,196,106,.42);background:rgba(127,127,135,.15)}
+.search input{flex:1;font-size:12.5px;min-width:0}
+.search input::placeholder{color:var(--dim-2)}
+.search svg{opacity:.42}
+.count{font-size:11.5px;color:var(--dim-2);white-space:nowrap;font-variant-numeric:tabular-nums}
+
+.wallbar{display:flex;align-items:center;justify-content:space-between;margin-top:18px;gap:16px}
+.tabs{display:flex;gap:4px;align-items:center}
+.tab{
+  display:inline-flex;align-items:center;justify-content:center;line-height:1;
+  height:28px;padding:0 12px;border-radius:7px;font-size:12.5px;
+  color:var(--dim);transition:.16s;white-space:nowrap;
+}
+.tab:hover{color:var(--text);background:rgba(127,127,135,.10)}
+.tab.active{background:rgba(127,127,135,.17);color:var(--text);font-weight:500}
+.tab.add{width:26px;padding:0;color:var(--dim-2);font-size:15px}
+.wallbar-right{display:flex;gap:8px;align-items:center}
+.chip{
+  display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;
+  border-radius:7px;font-size:12px;color:var(--dim);
+  background:rgba(127,127,135,.10);transition:.16s;
+}
+.chip:hover{color:var(--text);background:rgba(127,127,135,.17)}
+
+/* composer */
+.composer{
+  margin-top:14px;border-radius:var(--r-lg);padding:16px 18px 14px;
+  background:var(--paper);color:var(--ink);
+  box-shadow:var(--paper-shadow);
+  transition:background .28s var(--spring);
+}
+.composer textarea{
+  width:100%;height:52px;font-size:14.5px;line-height:1.55;
+  color:var(--ink);font-weight:450;
+}
+.composer textarea::placeholder{color:rgba(42,39,30,.42)}
+.composer-foot{display:flex;align-items:center;justify-content:space-between;margin-top:8px}
+.swatches{display:flex;gap:8px}
+/* 色块是圆角方形而不是圆形：便签纸本身是方的，方形读作「一张纸」，圆形只会读作「一个色点」 */
+.sw-track{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:3px 7px;border-radius:9px;
+  background:rgba(42,39,30,.105);
+  box-shadow:inset 0 0 0 1px rgba(42,39,30,.07);
+}
+.sw{
+  width:17px;height:17px;border-radius:4px;border:none;position:relative;
+  /* 上亮下暗极轻一层，16px 上也有纸的厚度感 */
+  background-image:linear-gradient(180deg, rgba(255,255,255,.16), rgba(255,255,255,0) 52%, rgba(0,0,0,.05));
+  box-shadow:inset 0 0 0 1px rgba(42,39,30,.12), 0 1px 1.5px rgba(42,39,30,.14);
+  transition:transform .18s var(--spring);
+}
+.sw:hover{transform:scale(1.1)}
+.sw.active{
+  transform:scale(1.045);
+  box-shadow:inset 0 0 0 1px rgba(42,39,30,.14), 0 1.5px 2.5px rgba(42,39,30,.22);
+}
+.sw.active::after{
+  content:"";position:absolute;inset:-2.5px;border-radius:6px;
+  border:1.3px solid rgba(42,39,30,.55);
+}
+/* 深色背景下的选中态：换成亮环，否则看不见 */
+.cap-foot .sw.active::after{border-color:rgba(255,255,255,.78)}
+.composer-actions{display:flex;align-items:center;gap:12px}
+.kbd-hint{font-size:11px;color:rgba(42,39,30,.42);letter-spacing:.02em}
+.add-btn{
+  display:inline-flex;align-items:center;justify-content:center;line-height:1;
+  height:30px;padding:0 15px;border-radius:999px;font-size:12.5px;font-weight:550;
+  background:rgba(42,39,30,.86);color:#F7EDCB;transition:.18s var(--spring);
+  box-shadow:0 2px 6px rgba(60,48,20,.22);
+}
+.add-btn:hover{transform:translateY(-1px);background:rgba(35,32,24,.94)}
+.add-btn:active{transform:translateY(0) scale(.98)}
+
+/* masonry */
+.masonry{
+  flex:1;min-height:0;margin-top:16px;display:flex;align-items:flex-start;gap:16px;
+  overflow-y:auto;padding-bottom:26px;
+  scrollbar-width:thin;scrollbar-color:rgba(127,127,135,.3) transparent;
+}
+.masonry::-webkit-scrollbar{width:8px}
+.masonry::-webkit-scrollbar-thumb{background:rgba(127,127,135,.26);border-radius:99px;border:2px solid transparent;background-clip:padding-box}
+.win-body{position:relative}
+.win-body::after{content:"";position:absolute;left:0;right:0;bottom:0;height:34px;pointer-events:none;
+  background:linear-gradient(to top,var(--panel),transparent)}
+.win-body{position:relative}
+.win-body::after{content:"";position:absolute;left:0;right:0;bottom:0;height:34px;pointer-events:none;
+  background:linear-gradient(to top,var(--panel),transparent)}
+.col{flex:1;min-width:0;display:flex;flex-direction:column;gap:16px}
+
+/* note card */
+.p-yellow{--paper:#F7E7A6;--ink:#2C2718}
+.p-pink{--paper:#F4D2DC;--ink:#2E1F25}
+.p-blue{--paper:#CFE0F7;--ink:#1B2436}
+.p-mint{--paper:#D2EDDC;--ink:#1B2A22}
+.p-purple{--paper:#E2D8F5;--ink:#251F30}
+.p-cream{--paper:#F0E8DA;--ink:#2A241C}
+.note{
+  position:relative;border-radius:var(--r-md);padding:14px 15px 12px;
+  background:var(--paper);color:var(--ink);
+  box-shadow:var(--paper-shadow);
+  transition:transform .2s var(--spring), box-shadow .2s ease, opacity .2s;
+  animation:pop .3s var(--spring) both;
+}
+@keyframes pop{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}
+.note:hover{transform:translateY(-2px);box-shadow:0 14px 30px rgba(0,0,0,.34), 0 1px 0 rgba(255,255,255,.5) inset}
+.note-label{
+  display:flex;align-items:center;justify-content:space-between;
+  font-size:10.5px;font-weight:600;letter-spacing:.06em;
+  color:rgba(42,39,30,.46);text-transform:none;
+}
+.note-label .tag{display:flex;align-items:center;gap:5px}
+.note-label .tag::before{content:"";width:5px;height:5px;border-radius:2px;background:currentColor;opacity:.7}
+.note-label svg{opacity:.4}
+.note-text{
+  font-size:13.5px;line-height:1.62;margin-top:9px;font-weight:450;
+  letter-spacing:.005em;word-break:break-word;
+}
+.note-text.big{font-size:15px;font-weight:520;line-height:1.55}
+.note-foot{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  margin-top:12px;font-size:10.5px;color:rgba(42,39,30,.40);
+  font-variant-numeric:tabular-nums;
+}
+.note-foot .prog{font-weight:600;color:rgba(42,39,30,.42)}
+.note-foot .edit{opacity:0;transition:.16s}
+.note:hover .note-foot .edit{opacity:.5}
+
+/* thumb */
+.thumb{
+  margin-top:10px;border-radius:8px;overflow:hidden;height:104px;
+  background:#23262E;position:relative;
+  box-shadow:0 1px 0 rgba(255,255,255,.25) inset, 0 2px 8px rgba(0,0,0,.14);
+}
+.thumb.photo{background:
+  radial-gradient(130% 100% at 10% 6%, rgba(255,214,130,.92), transparent 56%),
+  radial-gradient(120% 110% at 94% 96%, rgba(126,164,255,.85), transparent 60%),
+  linear-gradient(145deg,#4A3F52,#242C3E 62%,#1A2130)}
+.thumb.photo::after{content:"";position:absolute;inset:0;
+  background:repeating-linear-gradient(112deg, rgba(255,255,255,.07) 0 1px, transparent 1px 10px)}
+.thumb-ui{position:absolute;inset:0;padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.thumb-ui .tl{height:5px;border-radius:3px;background:rgba(255,255,255,.20)}
+.thumb-ui .tl.w40{width:40%}
+.thumb-ui .tl.w70{width:70%;background:rgba(255,255,255,.13)}
+.thumb-ui .tl.w55{width:55%;background:rgba(255,255,255,.10)}
+.thumb-ui .tb{margin-top:auto;height:34px;border-radius:5px;background:linear-gradient(120deg,rgba(233,196,106,.55),rgba(233,196,106,.14))}
+.thumb::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(160deg,rgba(120,170,255,.10),transparent 55%);
+}
+
+/* checklist */
+.ck{display:flex;gap:8px;align-items:flex-start;margin-top:7px;font-size:13px;line-height:1.5;cursor:pointer}
+.ck .box{
+  width:14px;height:14px;flex:0 0 14px;margin-top:2px;border-radius:4px;
+  border:1.4px solid rgba(42,39,30,.38);display:grid;place-items:center;
+  transition:.16s;
+}
+.ck .box svg{opacity:0;transition:.16s}
+.ck.done .box{background:rgba(42,39,30,.78);border-color:transparent}
+.ck.done .box svg{opacity:1}
+.ck.done span.lbl{text-decoration:line-through;opacity:.42}
+.ck:hover .box{border-color:rgba(42,39,30,.7)}
+
+/* locked note */
+.note.locked .lockable{filter:blur(6px);opacity:.55;user-select:none;pointer-events:none}
+.note.locked .lock-badge{
+  position:absolute;inset:0;display:grid;place-items:center;gap:0;
+  border-radius:var(--r-md);background:rgba(0,0,0,.02);
+}
+.lock-badge .lk{
+  display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:550;
+  color:rgba(42,39,30,.62);background:rgba(255,255,255,.55);
+  padding:5px 10px;border-radius:999px;backdrop-filter:blur(6px);
+  box-shadow:0 2px 8px rgba(0,0,0,.10);
+}
+
+/* code note */
+.code{
+  margin-top:10px;font-family:"SF Mono",ui-monospace,Menlo,monospace;
+  font-size:11.5px;line-height:1.7;background:rgba(42,39,30,.07);
+  border-radius:7px;padding:9px 10px;white-space:pre-wrap;
+  color:rgba(42,39,30,.82);
+}
+.link-card{
+  margin-top:10px;display:flex;gap:10px;align-items:center;
+  padding:9px 10px;border-radius:8px;background:rgba(42,39,30,.06);
+}
+.link-card .fav{width:26px;height:26px;border-radius:6px;background:rgba(42,39,30,.14);display:grid;place-items:center;flex:0 0 26px}
+.link-card b{font-size:11.5px;font-weight:600;display:block}
+.link-card small{font-size:10px;color:rgba(42,39,30,.42)}
+
+/* toast */
+.toast{
+  position:absolute;left:50%;bottom:22px;transform:translate(-50%,16px);
+  background:rgba(28,28,32,.92);color:#F3F3F5;font-size:12px;
+  padding:8px 14px;border-radius:999px;box-shadow:0 10px 26px rgba(0,0,0,.4);
+  opacity:0;pointer-events:none;transition:.26s var(--spring);
+  border:.5px solid rgba(255,255,255,.1);
+}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+
+/* ============================================================
+   02 · Quick capture
+   ============================================================ */
+.scene-bg{
+  position:absolute;inset:0;border-radius:14px;overflow:hidden;
+  background:#0E1014;
+}
+.scene-bg .app-backdrop{position:absolute;inset:0;filter:saturate(.82)}
+.fake-doc{position:absolute;inset:26px;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;
+  background:#1C1F27;border:.5px solid rgba(255,255,255,.10);box-shadow:0 30px 70px rgba(0,0,0,.45)}
+.fake-toolbar{height:46px;background:#23262F;display:flex;align-items:center;gap:8px;padding:0 16px;border-bottom:1px solid rgba(255,255,255,.06)}
+.fake-toolbar i{width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.18);display:block}
+.fake-url{margin-left:14px;height:24px;flex:1;max-width:420px;border-radius:6px;background:rgba(255,255,255,.07);
+  display:flex;align-items:center;padding:0 10px;font-size:10.5px;color:rgba(255,255,255,.42);gap:6px}
+.fake-canvas{flex:1;padding:38px 70px;display:flex;flex-direction:column;gap:13px}
+.fake-img{height:92px;width:42%;border-radius:8px;margin-top:14px;
+  background:radial-gradient(120% 100% at 12% 10%, rgba(255,214,130,.55), transparent 60%),
+             radial-gradient(120% 100% at 90% 90%, rgba(126,164,255,.5), transparent 60%),
+             linear-gradient(145deg,#2E3547,#232A38)}
+.fake-img{height:92px;width:42%;border-radius:8px;margin-top:14px;
+  background:radial-gradient(120% 100% at 12% 10%, rgba(255,214,130,.55), transparent 60%),
+             radial-gradient(120% 100% at 90% 90%, rgba(126,164,255,.5), transparent 60%),
+             linear-gradient(145deg,#2E3547,#232A38)}
+.fake-h{font-size:17px;font-weight:600;color:rgba(255,255,255,.86);margin-bottom:10px;letter-spacing:-.01em}
+.fake-line{height:9px;border-radius:5px;background:rgba(255,255,255,.115)}
+.fake-line.t{height:20px;width:44%;background:rgba(255,255,255,.14);margin-bottom:8px}
+.scrim{position:absolute;inset:0;background:rgba(8,8,10,.30)}
+
+.capture{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:566px;border-radius:18px;background:#191920;
+  border:.5px solid rgba(255,255,255,.14);
+  box-shadow:0 50px 110px rgba(0,0,0,.72), 0 0 0 1px rgba(0,0,0,.5), 0 1px 0 rgba(255,255,255,.06) inset;
+  overflow:hidden;
+}
+.cap-top{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 0}
+.cap-chips{display:flex;gap:6px}
+.cap-chip{
+  display:flex;align-items:center;gap:5px;height:26px;padding:0 9px;
+  border-radius:6px;font-size:11.5px;color:rgba(243,243,245,.62);
+  background:rgba(127,127,135,.13);
+}
+.cap-chip b{font-weight:500;color:rgba(243,243,245,.9)}
+.cap-body{padding:14px 18px 0}
+.cap-body textarea{width:100%;height:46px;font-size:14.5px;line-height:1.6;color:#F3F3F5}
+.cap-body textarea::placeholder{color:rgba(243,243,245,.28)}
+.cap-img{
+  display:flex;gap:10px;align-items:center;margin-top:6px;
+  padding:8px;border-radius:9px;background:rgba(127,127,135,.10);width:max-content;
+}
+.cap-img .minithumb{width:84px;height:56px;border-radius:6px;background:linear-gradient(140deg,#2A3140,#1E2430);position:relative;overflow:hidden}
+.cap-img .minithumb::after{content:"";position:absolute;inset:8px;border-radius:3px;background:linear-gradient(120deg,rgba(233,196,106,.5),rgba(120,170,255,.25))}
+.cap-img small{font-size:10.5px;color:var(--dim-2)}
+.cap-img .x{width:20px;height:20px;border-radius:50%;background:rgba(255,255,255,.10);display:grid;place-items:center;font-size:11px;color:var(--dim)}
+.cap-foot{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 18px 16px;margin-top:10px;border-top:1px solid rgba(255,255,255,.06);
+}
+.cap-foot .hint2{font-size:11px;color:rgba(243,243,245,.32)}
+.cap-save{
+  display:inline-flex;align-items:center;justify-content:center;line-height:1;
+  height:30px;padding:0 15px;border-radius:999px;font-size:12.5px;font-weight:560;
+  background:linear-gradient(180deg,#F2D98C,#E4BE63);color:#2A2415;
+  box-shadow:0 3px 10px rgba(233,196,106,.28);
+}
+.cap-hint{
+  position:absolute;left:50%;bottom:56px;transform:translateX(-50%);
+  font-size:11.5px;color:rgba(243,243,245,.42);white-space:nowrap;
+}
+
+/* ============================================================
+   03 · Notch
+   ============================================================ */
+.notch-stage{position:absolute;inset:0;border-radius:14px;overflow:hidden;background:#0A0C10}
+.nstrip{position:relative;border-radius:12px;overflow:hidden;margin-bottom:14px;
+  border:.5px solid rgba(255,255,255,.10);box-shadow:0 14px 34px rgba(0,0,0,.38)}
+.wallpaper{
+  position:absolute;inset:0;
+  background:
+    radial-gradient(620px 260px at 16% -6%, rgba(96,130,214,.46), transparent 70%),
+    radial-gradient(540px 240px at 84% 14%, rgba(186,116,186,.36), transparent 72%),
+    linear-gradient(160deg,#161B28,#0B0E15 72%);
+}
+.menubar{
+  position:relative;height:30px;display:flex;align-items:center;
+  background:rgba(16,18,24,.55);backdrop-filter:blur(18px);
+  border-bottom:.5px solid rgba(255,255,255,.05);
+  font-size:11.5px;color:rgba(243,243,245,.82);
+}
+.mb-left{display:flex;align-items:center;gap:16px;padding-left:16px;flex:1}
+.mb-right{display:flex;align-items:center;gap:14px;padding-right:16px;justify-content:flex-end;flex:1}
+.mb-item{opacity:.72;font-weight:500}
+.mb-item.bold{opacity:1;font-weight:600}
+.mb-clock{font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.apple{width:13px;height:13px;border-radius:50%;background:rgba(255,255,255,.7)}
+/* 物理刘海：宽度固定，这块区域永远不可绘制内容 */
+.notch-shell{
+  position:absolute;left:50%;transform:translateX(-50%);top:0;z-index:2;
+  display:flex;align-items:flex-start;height:34px;
+}
+.notch-phys{
+  width:168px;height:34px;flex:0 0 auto;background:#000;
+  border-radius:0 0 11px 11px;
+  display:flex;align-items:center;justify-content:center;
+}
+.notch-phys .cam{width:6px;height:6px;border-radius:50%;background:#151B24}
+/* 悬停时从刘海左右两侧长出来的黑色延伸区 —— 图标只能落在这里 */
+.wing{
+  width:0;height:34px;flex:0 0 auto;overflow:hidden;background:#000;
+  display:flex;align-items:center;justify-content:center;
+  transition:width .3s var(--spring);
+}
+.wing.left{border-radius:0 0 0 11px}
+.wing.right{border-radius:0 0 11px 0}
+.notch-shell.wide .wing{width:56px}
+.nicon{
+  width:24px;height:24px;border-radius:6px;flex:0 0 auto;
+  display:grid;place-items:center;
+  background:rgba(255,255,255,.10);color:rgba(255,255,255,.86);
+  opacity:0;transform:scale(.86);
+  transition:opacity .16s .08s, transform .2s var(--spring), background .16s;
+}
+.notch-shell.wide .nicon{opacity:1;transform:none}
+.nicon:hover{background:rgba(233,196,106,.9);color:#2A2415}
+/* 设计标注：标出物理刘海的实际宽度，说明图标为何不能放在中间 */
+.notch-guide{
+  position:absolute;left:50%;top:0;transform:translateX(-50%);width:168px;height:34px;
+  border:1px dashed rgba(255,255,255,.26);border-top:none;border-radius:0 0 11px 11px;z-index:3;
+}
+.notch-guide span{
+  position:absolute;left:50%;top:38px;transform:translateX(-50%);
+  font-size:9px;color:rgba(255,255,255,.40);white-space:nowrap;letter-spacing:.02em;
+}
+/* 设计标注：标出物理刘海的实际宽度，说明图标为何不能放在中间 */
+
+
+.npanel{
+  position:absolute;left:50%;top:34px;transform:translateX(-50%) translateY(-8px) scale(.98);
+  width:470px;border-radius:0 0 18px 18px;background:rgba(14,14,17,.94);
+  backdrop-filter:blur(26px) saturate(1.3);
+  border:.5px solid rgba(255,255,255,.10);border-top:none;
+  box-shadow:0 26px 60px rgba(0,0,0,.55);
+  padding:14px 16px 12px;opacity:0;transition:.28s var(--spring);
+}
+.npanel.show{opacity:1;transform:translateX(-50%) translateY(0) scale(1)}
+.np-head{display:flex;align-items:center;justify-content:space-between;font-size:10.5px;color:rgba(243,243,245,.40);letter-spacing:.06em;margin-bottom:10px}
+.nrow{display:flex;gap:9px;align-items:center;padding:7px 8px;border-radius:8px;transition:.14s}
+.nrow:hover{background:rgba(255,255,255,.06)}
+.nrow .dot{width:6px;height:36px;border-radius:3px;flex:0 0 6px}
+.nrow .txt{flex:1;min-width:0}
+.nrow .txt b{display:block;font-size:12px;font-weight:450;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:rgba(243,243,245,.88)}
+.nrow .txt small{font-size:10px;color:rgba(243,243,245,.32)}
+.np-input{
+  margin-top:10px;display:flex;align-items:center;gap:8px;
+  background:rgba(255,255,255,.07);border-radius:9px;height:36px;padding:0 11px;
+  font-size:12.5px;color:rgba(243,243,245,.34);
+  border:1px solid transparent;
+}
+.np-input kbd{margin-left:auto}
+.np-foot{display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding-top:9px;border-top:1px solid rgba(255,255,255,.06)}
+.np-foot span{font-size:11.5px;color:rgba(243,243,245,.45)}
+.np-foot button{font-size:11.5px;color:var(--accent);font-weight:500;display:flex;align-items:center;gap:4px}
+.strip-label em{display:block;font-style:normal;font-size:10px;color:rgba(243,243,245,.38);margin-top:2px;letter-spacing:.01em}
+.strip-label{
+  position:absolute;left:14px;top:44px;z-index:5;
+  font-size:10.5px;color:rgba(255,255,255,.5);
+  background:rgba(0,0,0,.35);padding:3px 8px;border-radius:6px;
+  backdrop-filter:blur(8px);letter-spacing:.04em;
+}
+.notch-title{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:16px}
+.notch-title h2{font-size:17px;font-weight:600;letter-spacing:-.01em}
+.notch-title p{font-size:12px;color:var(--dim-2);margin-top:4px}
+
+/* ============================================================
+   04 · Detail sheet
+   ============================================================ */
+.sheet-wrap{position:absolute;inset:0}
+.detail-back{position:absolute;inset:0;padding:70px 30px 30px;display:flex;gap:16px;overflow:hidden}
+.detail-back .col{flex:1;display:flex;flex-direction:column;gap:16px;min-width:0}
+.sheet-bg{position:absolute;inset:0;background:rgba(8,8,10,.66)}
+.detail{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2;
+  width:680px;border-radius:16px;background:#F6E7A6;color:#2C2718;
+  box-shadow:0 40px 90px rgba(0,0,0,.55), 0 1px 0 rgba(255,255,255,.6) inset;
+  padding:24px 26px 18px;
+}
+.d-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.d-chips{display:flex;gap:6px}
+.d-chip{
+  height:24px;padding:0 9px;border-radius:6px;font-size:11px;font-weight:550;
+  background:rgba(42,39,30,.08);color:rgba(42,39,30,.6);
+  display:flex;align-items:center;gap:4px;
+}
+.d-actions{display:flex;gap:6px}
+.d-ico{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;color:rgba(42,39,30,.5);background:rgba(42,39,30,.06)}
+.d-ico:hover{background:rgba(42,39,30,.12)}
+.d-title{font-size:21px;font-weight:600;letter-spacing:-.02em;line-height:1.4;outline:none}
+.d-body{font-size:14px;line-height:1.75;margin-top:10px;outline:none;color:rgba(42,39,30,.86)}
+.d-thumb{margin-top:14px;height:118px;border-radius:10px;position:relative;overflow:hidden;
+  background:
+    radial-gradient(120% 90% at 12% 8%, rgba(255,214,130,.85), transparent 55%),
+    radial-gradient(110% 100% at 92% 92%, rgba(126,164,255,.75), transparent 58%),
+    linear-gradient(145deg,#3A3242,#1D2434 62%,#161C28);
+  box-shadow:0 1px 0 rgba(255,255,255,.18) inset, 0 8px 20px rgba(0,0,0,.22)}
+.d-thumb::after{content:"";position:absolute;inset:0;
+  background:repeating-linear-gradient(115deg, rgba(255,255,255,.055) 0 1px, transparent 1px 9px)}
+.d-foot{display:flex;align-items:center;justify-content:space-between;margin-top:16px;padding-top:12px;border-top:1px solid rgba(42,39,30,.12);font-size:11px;color:rgba(42,39,30,.42)}
+.d-foot .right{display:flex;gap:8px;align-items:center}
+.d-save{display:inline-flex;align-items:center;justify-content:center;
+  height:28px;padding:0 14px;border-radius:999px;background:rgba(42,39,30,.85);color:#F7EDCB;
+  font-size:12px;font-weight:550;line-height:1;letter-spacing:.02em}
+
+/* ============================================================
+   05 · Lock / Touch ID
+   ============================================================ */
+.tid-scrim{position:absolute;inset:0;background:rgba(6,6,8,.46)}
+.tid{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:3;
+  width:300px;border-radius:16px;padding:26px 22px 16px;text-align:center;
+  background:rgba(28,28,32,.97);
+  border:.5px solid rgba(255,255,255,.14);
+  box-shadow:0 30px 70px rgba(0,0,0,.6);
+}
+.tid .fp{width:52px;height:52px;margin:0 auto 14px;color:#E8C46B}
+.tid h3{font-size:13.5px;font-weight:600;margin-bottom:6px}
+.tid p{font-size:11.5px;line-height:1.6;color:rgba(243,243,245,.5);margin-bottom:18px}
+.tid-btns{display:flex;gap:8px}
+.tid-btns button{
+  flex:1;display:inline-flex;align-items:center;justify-content:center;line-height:1;
+  height:32px;border-radius:8px;font-size:12px;
+  background:rgba(255,255,255,.10);color:rgba(243,243,245,.86);
+}
+.tid-btns button.primary{background:linear-gradient(180deg,#F2D98C,#E4BE63);color:#2A2415;font-weight:560}
+.tid .status{font-size:11px;color:#7FD8A3;height:14px;margin-bottom:10px;opacity:0;transition:.2s}
+.tid .status.show{opacity:1}
+
+.ob{display:grid;grid-template-columns:1fr 1fr 1.06fr;gap:16px;margin-top:18px;align-items:start}
+.ob .note{width:auto;min-width:0}
+.ob .note-text.big{font-size:13px}
+.sample-tag{
+  display:inline-flex;align-items:center;line-height:1;
+  font-size:9.5px;font-weight:600;letter-spacing:.06em;
+  padding:3px 6px;border-radius:4px;
+  background:rgba(42,39,30,.08);color:rgba(42,39,30,.45);
+}
+.guide{
+  border:1px dashed rgba(255,255,255,.17);border-radius:14px;
+  padding:18px 18px 16px;background:rgba(255,255,255,.022);
+}
+.guide-h{font-size:12.5px;font-weight:600;color:var(--dim);margin-bottom:14px}
+.g-row{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--line)}
+.g-row:first-of-type{border-top:none;padding-top:0}
+.g-row .k{flex:0 0 74px;text-align:center;font-size:10.5px;padding:4px 0;border-radius:6px;
+  background:rgba(127,127,135,.14);border:1px solid var(--line-2);color:var(--text);white-space:nowrap}
+.g-row b{display:block;font-size:12.5px;font-weight:560;line-height:1.35}
+.g-row span{display:block;font-size:11px;color:var(--dim-2);margin-top:3px;line-height:1.5}
+.drop{margin-top:16px;height:132px;border-radius:14px;border:1px dashed rgba(255,255,255,.15);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;
+  color:var(--dim-2);font-size:11.5px;background:rgba(255,255,255,.014)}
+.drop b{font-size:13px;font-weight:560;color:var(--dim)}
+.drop svg{margin-bottom:3px}
+.ob-foot{margin-top:16px;display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--dim-2)}
+.ob-foot i{width:4px;height:4px;border-radius:50%;background:currentColor;display:block;opacity:.5}
+
+/* ============================================================
+   06 · Settings
+   ============================================================ */
+.prefs{display:flex;flex:1;min-height:0}
+.prefs-side{
+  width:186px;flex:0 0 186px;background:var(--panel-2);
+  border-right:1px solid var(--line);padding:16px 10px;
+}
+.prefs-side .grp{font-size:10px;color:var(--dim-2);padding:6px 10px;letter-spacing:.08em}
+.p-item{display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border-radius:7px;font-size:12.5px;color:var(--dim);width:100%}
+.p-item.active{background:rgba(127,127,135,.16);color:var(--text);font-weight:500}
+.p-item:hover{color:var(--text)}
+.prefs-main{flex:1;padding:22px 26px;overflow-y:auto}
+.prefs-main h2{font-size:16px;font-weight:600;margin-bottom:16px;letter-spacing:-.01em}
+.pgroup{background:var(--panel-2);border:1px solid var(--line);border-radius:11px;overflow:hidden;margin-bottom:14px}
+.prow{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.prow:last-child{border-bottom:none}
+.prow .lbl b{display:block;font-size:12.5px;font-weight:450}
+.prow .lbl small{display:block;font-size:10.5px;color:var(--dim-2);margin-top:2px;line-height:1.5}
+.toggle{width:38px;height:22px;border-radius:999px;background:rgba(127,127,135,.34);position:relative;flex:0 0 38px;transition:.2s;
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.22)}
+.toggle::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;
+  transition:.22s var(--spring);box-shadow:0 1px 2px rgba(0,0,0,.35),0 0 0 .5px rgba(0,0,0,.08)}
+.toggle.on{background:#5DBB63}
+.toggle.on::after{left:18px}
+.seg{display:flex;gap:2px;background:rgba(127,127,135,.14);border-radius:7px;padding:2px}
+.seg button{height:22px;padding:0 9px;border-radius:5px;font-size:11px;color:var(--dim)}
+.seg button.on{background:rgba(255,255,255,.14);color:var(--text)}
+html[data-theme="light"] .seg button.on{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.keyrow{display:flex;gap:6px;align-items:center}
+.keycap{
+  font-size:11px;padding:3px 7px;border-radius:5px;background:rgba(127,127,135,.16);
+  border:1px solid var(--line-2);border-bottom-width:2px;color:var(--text);
+  min-width:22px;text-align:center;
+}
+.colorrow{display:flex;gap:6px}
+.colorrow .c{width:22px;height:22px;border-radius:6px;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.18), 0 1px 3px rgba(0,0,0,.28)}
+
+/* ============================================================
+   07 · Onboarding
+   ============================================================ */
+.tipbar{
+  display:flex;align-items:center;gap:10px;margin-top:14px;
+  padding:10px 14px;border-radius:10px;
+  background:linear-gradient(90deg,rgba(233,196,106,.13),rgba(233,196,106,.03));
+  border:1px solid rgba(233,196,106,.18);
+  font-size:11.5px;color:rgba(243,243,245,.72);
+}
+.tipbar b{color:var(--accent);font-weight:600}
+.tipbar .sp{margin-left:auto;display:flex;gap:6px}
+.tipbar button{font-size:11px;color:rgba(243,243,245,.6);padding:3px 8px;border-radius:6px;background:rgba(127,127,135,.14)}
+.tipbar button:hover{color:#fff}
+
+.empty-note{
+  border:1px dashed rgba(127,127,135,.28);border-radius:var(--r-md);
+  padding:26px 18px;text-align:center;color:var(--dim-2);font-size:11.5px;
+}
+.empty-note b{display:block;font-size:12.5px;color:var(--dim);margin-bottom:4px;font-weight:500}
+</style>
+</head>
+<body>
+<div class="viewer">
+  <aside class="rail">
+    <div class="brand">
+      <div class="brand-mark">▤</div>
+      <div><b>便签墙</b><small>高保真原型 v0.1</small></div>
+    </div>
+    <nav class="scenes" id="scenes">
+      <button class="scene-btn active" data-go="wall"><i>01</i><span>便签墙主界面<em>顶栏 · 墙切换 · 瀑布流</em></span></button>
+      <button class="scene-btn" data-go="capture"><i>02</i><span>快捷捕获<em>⌥Space 浮于任意 App</em></span></button>
+      <button class="scene-btn" data-go="notch"><i>03</i><span>刘海三态<em>静息 → 图标 → 面板</em></span></button>
+      <button class="scene-btn" data-go="detail"><i>04</i><span>便签详情<em>就地编辑 · 清单 · 图片</em></span></button>
+      <button class="scene-btn" data-go="lock"><i>05</i><span>锁定与解锁<em>模糊态 · Touch ID</em></span></button>
+      <button class="scene-btn" data-go="settings"><i>06</i><span>设置<em>通用 · 快捷键 · 安全</em></span></button>
+      <button class="scene-btn" data-go="onboarding"><i>07</i><span>首次启动<em>单墙 + 示例便签</em></span></button>
+    </nav>
+    <div class="rail-foot">
+      <button class="theme-btn" id="themeBtn">切换明暗</button>
+      <div class="hint"><kbd>⌘</kbd> + <kbd>1</kbd>–<kbd>7</kbd> 切换场景<br>原型可点击 · 颜色与勾选框可交互</div>
+    </div>
+  </aside>
+
+  <main class="stage" id="stage">
+    <div class="frame-wrap" id="wrap">
+      <div class="frame" id="frame">
+
+        <!-- ============ 01 WALL ============ -->
+        <section class="scene active" data-scene="wall">
+          <div class="win">
+            <div class="titlebar">
+              <div class="lights"><i></i><i></i><i></i></div>
+              <div class="tb-title">便签墙</div>
+              <div class="tb-right">已保存</div>
+            </div>
+            <div class="win-body">
+              <header class="wall-head">
+                <div>
+                  <h1>便签墙</h1>
+                  <p>每个灵感，都值得记下。便签自动保存。</p>
+                </div>
+                <div class="head-tools">
+                  <label class="search">
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.4"/><path d="M10.4 10.4L14 14" stroke-linecap="round"/></svg>
+                    <input id="search" placeholder="搜索便签">
+                  </label>
+                  <span class="count" id="count">8 张便签</span>
+                </div>
+              </header>
+
+              <div class="wallbar">
+                <div class="tabs" id="tabs">
+                  <button class="tab active" data-wall="all">全部</button>
+                  <button class="tab" data-wall="mine">我的便签</button>
+                  <button class="tab" data-wall="work">工作</button>
+                  <button class="tab" data-wall="idea">灵感</button>
+                  <button class="tab" data-wall="topic">选题库</button>
+                  <button class="tab add">＋</button>
+                </div>
+                <div class="wallbar-right">
+                  <button class="chip" id="sortBtn">最新 ↓</button>
+                  <button class="chip" title="筛选">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.5 4h11M4.5 8h7M6.5 12h3"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="composer" id="composer" style="--paper:#F7E7A6;--ink:#2C2718">
+                <textarea id="composerText" placeholder="写下你的下一个灵感…"></textarea>
+                <div class="composer-foot">
+                  <div class="swatches" id="swatches"><div class="sw-track">
+                    <button class="sw active" data-paper="#F7E7A6" data-ink="#2C2718" style="background:#F7E7A6"></button>
+                    <button class="sw" data-paper="#F4D2DC" data-ink="#2E1F25" style="background:#F4D2DC"></button>
+                    <button class="sw" data-paper="#CFE0F7" data-ink="#1B2436" style="background:#CFE0F7"></button>
+                    <button class="sw" data-paper="#D2EDDC" data-ink="#1B2A22" style="background:#D2EDDC"></button>
+                    <button class="sw" data-paper="#E2D8F5" data-ink="#251F30" style="background:#E2D8F5"></button>
+                    <button class="sw" data-paper="#F0E8DA" data-ink="#2A241C" style="background:#F0E8DA"></button>
+                  </div></div>
+                  <div class="composer-actions">
+                    <span class="kbd-hint">⌘ + Enter</span>
+                    <button class="add-btn" id="addBtn">添加到墙上</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="masonry" id="masonry">
+                <article class="note p-pink" data-wall="idea" data-ts="8" data-text="优化后便签墙终于变好看了 想法">
+                  <div class="note-label"><span class="tag">想法</span>
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11.3 2.3l2.4 2.4L5 13.4H2.6V11z" stroke-linejoin="round"/></svg>
+                  </div>
+                  <div class="note-text big">优化后，便签墙终于变好看了</div>
+                  <div class="note-foot"><span class="time">3 天前</span><span class="edit">✎</span></div>
+                </article>
+
+                <article class="note p-yellow" data-wall="mine" data-ts="7" data-text="测试便签 灵感">
+                  <div class="note-label"><span class="tag">灵感</span></div>
+                  <div class="note-text">测试便签</div>
+                  <div class="note-foot"><span class="time">3 天前</span><span class="edit">✎</span></div>
+                </article>
+
+                <article class="note p-blue" data-wall="work" data-ts="9" data-text="这个交互要改 刘海展开时不要抢焦点 资料">
+                  <div class="note-label"><span class="tag">资料</span></div>
+                  <div class="thumb"><div class="thumb-ui"><div class="tl w40"></div><div class="tl w70"></div><div class="tl w55"></div><div class="tb"></div></div></div>
+                  <div class="note-text">这个交互要改：刘海展开时不要抢焦点，否则正在打的字就断了</div>
+                  <div class="note-foot"><span class="time">今天 14:32</span><span class="edit">✎</span></div>
+                </article>
+
+                <article class="note p-mint" data-wall="work" data-ts="6" data-text="周五前要处理的三件事 待办 原型 标注 导出">
+                  <div class="note-label"><span class="tag">待办</span></div>
+                  <div class="note-text" style="margin-bottom:2px">周五前要处理的三件事</div>
+                  <div class="ck done"><span class="box"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#F7E7A6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1.6 5.2L4 7.5l4.4-5"/></svg></span><span class="lbl">给设计稿加标注</span></div>
+                  <div class="ck"><span class="box"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#F7E7A6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1.6 5.2L4 7.5l4.4-5"/></svg></span><span class="lbl">改完原型里的三段文案</span></div>
+                  <div class="ck"><span class="box"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#F7E7A6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1.6 5.2L4 7.5l4.4-5"/></svg></span><span class="lbl">把导出功能列进 v1.2</span></div>
+                  <div class="note-foot"><span class="time">2 天前</span><span class="prog">1/3</span></div>
+                </article>
+
+                <article class="note p-purple locked" data-wall="work" data-ts="5" data-text="已锁定的便签">
+                  <div class="note-label"><span class="tag">资料</span></div>
+                  <div class="lockable">
+                    <div class="note-text">客户那边的报价底线是 18 万，超过就要走二次审批，别在群里提。</div>
+                  </div>
+                  <div class="lock-badge"><span class="lk">
+                    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3.2" y="7" width="9.6" height="7" rx="1.8"/><path d="M5.6 7V5.2a2.4 2.4 0 014.8 0V7"/></svg>
+                    已锁定 · 点击解锁</span></div>
+                  <div class="note-foot"><span class="time">昨天 21:05</span></div>
+                </article>
+
+                <article class="note p-cream" data-wall="topic" data-ts="4" data-text="brew install 命令 资料 环境">
+                  <div class="note-label"><span class="tag">资料</span></div>
+                  <div class="note-text">新机器装环境，一次跑完</div>
+                  <div class="code">brew install --cask \
+  raycast rectangle arc</div>
+                  <div class="note-foot"><span class="time">11月2日</span><span class="edit">✎</span></div>
+                </article>
+
+                <article class="note p-pink" data-wall="idea" data-ts="7.5" data-text="便签不需要更聪明只需要更快出现 灵感">
+                  <div class="note-label"><span class="tag">灵感</span></div>
+                  <div class="note-text big">便签不需要更聪明，只需要更快出现。</div>
+                  <div class="note-foot"><span class="time">昨天 09:12</span><span class="edit">✎</span></div>
+                </article>
+
+                <article class="note p-blue" data-wall="topic" data-ts="3" data-text="NotchNook 交互笔记 资料 链接">
+                  <div class="note-label"><span class="tag">资料</span></div>
+                  <div class="note-text">悬停延迟别低于 150ms，否则误触率高</div>
+                  <div class="link-card">
+                    <div class="fav">
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="rgba(42,39,30,.7)" stroke-width="1.5"><path d="M6.5 9.5l3-3M7 4.4l1.2-1.2a2.6 2.6 0 013.6 3.6L10.6 8M9 11.6l-1.2 1.2a2.6 2.6 0 01-3.6-3.6L5.4 8" stroke-linecap="round"/></svg>
+                    </div>
+                    <div><b>NotchNook 的交互笔记</b><small>lo.cafe</small></div>
+                  </div>
+                  <div class="note-foot"><span class="time">11月5日</span><span class="edit">✎</span></div>
+                </article>
+              </div>
+            </div>
+            <div class="toast" id="toast">已贴到 工作墙</div>
+          </div>
+        </section>
+
+        <!-- ============ 02 CAPTURE ============ -->
+        <section class="scene" data-scene="capture">
+          <div class="scene-bg">
+            <div class="fake-doc">
+              <div class="fake-toolbar"><i></i><i></i><i></i><span class="fake-url">notion.so/刘海交互设计笔记</span></div>
+              <div class="fake-canvas">
+                <div class="fake-h">刘海交互设计笔记</div>
+                <div class="fake-line t"></div>
+                <div class="fake-line" style="width:88%"></div>
+                <div class="fake-line" style="width:94%"></div>
+                <div class="fake-line" style="width:76%"></div>
+                <div class="fake-line" style="width:90%;margin-top:14px"></div>
+                <div class="fake-line" style="width:62%"></div>
+                <div class="fake-line" style="width:84%;margin-top:14px"></div>
+                <div class="fake-line" style="width:70%"></div>
+                <div class="fake-line t" style="margin-top:24px;width:26%"></div>
+                <div class="fake-line" style="width:90%"></div>
+                <div class="fake-line" style="width:82%"></div>
+                <div class="fake-line" style="width:58%"></div>
+                <div class="fake-img"></div>
+                <div class="fake-line" style="width:76%;margin-top:16px"></div>
+                <div class="fake-line t" style="margin-top:24px;width:26%"></div>
+                <div class="fake-line" style="width:90%"></div>
+                <div class="fake-line" style="width:82%"></div>
+                <div class="fake-line" style="width:58%"></div>
+                <div class="fake-img"></div>
+                <div class="fake-line" style="width:76%;margin-top:16px"></div>
+              </div>
+            </div>
+            <div class="scrim"></div>
+            <div class="capture">
+              <div class="cap-top">
+                <div class="cap-chips">
+                  <span class="cap-chip">贴到 <b>工作</b>
+                    <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4l3 3 3-3" stroke-linecap="round"/></svg>
+                  </span>
+                  <span class="cap-chip"><b>想法</b>
+                    <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4l3 3 3-3" stroke-linecap="round"/></svg>
+                  </span>
+                </div>
+                <span style="font-size:11px;color:rgba(243,243,245,.28)">Esc 关闭并保存</span>
+              </div>
+              <div class="cap-body">
+                <textarea readonly>这个交互要改：刘海展开时不要抢焦点，否则正在打的字就断了</textarea>
+                <div class="cap-img">
+                  <div class="minithumb"></div>
+                  <div><small>截图 · 1280 × 800 · 186 KB</small><br><small style="color:rgba(243,243,245,.24)">已压缩至 2048px 以内</small></div>
+                  <div class="x">✕</div>
+                </div>
+              </div>
+              <div class="cap-foot">
+                <div class="swatches">
+                  <button class="sw" style="background:#F7E7A6"></button>
+                  <button class="sw" style="background:#F4D2DC"></button>
+                  <button class="sw active" style="background:#CFE0F7"></button>
+                  <button class="sw" style="background:#D2EDDC"></button>
+                  <button class="sw" style="background:#E2D8F5"></button>
+                  <button class="sw" style="background:#F0E8DA"></button>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px">
+                  <span class="hint2">⌘ + Enter</span>
+                  <button class="cap-save">保存</button>
+                </div>
+              </div>
+            </div>
+            <div class="cap-hint">浮于当前 App 之上，不抢焦点 · 光标已在输入区</div>
+          </div>
+        </section>
+
+        <!-- ============ 03 NOTCH ============ -->
+        <section class="scene" data-scene="notch">
+          <div class="notch-stage" style="padding:20px 24px 22px">
+            <div class="notch-title">
+              <div>
+                <h2>刘海入口 · 两段式渐进披露</h2>
+                <p>悬停 150ms 出图标，继续停留或点击展开面板，移开 400ms 收起</p>
+              </div>
+              <span style="font-size:10.5px;color:rgba(243,243,245,.3)">笔记本内置屏演示 · 无刘海设备降级为菜单栏图标</span>
+            </div>
+
+            <div class="nstrip" style="height:104px"><div class="wallpaper"></div>
+              <div class="strip-label">① 静息<em>物理刘海 · 这块区域永远不可绘制</em></div>
+              <div class="menubar">
+                <div class="mb-left"><span class="apple"></span><span class="mb-item bold">便签墙</span><span class="mb-item">文件</span><span class="mb-item">编辑</span><span class="mb-item">显示</span></div>
+                <div class="notch-shell">
+                  <div class="wing left"></div>
+                  <div class="notch-phys"><span class="cam"></span></div>
+                  <div class="wing right"></div>
+                </div>
+                <div class="mb-right"><span class="mb-item">◔</span><span class="mb-item">⌁</span><span class="mb-clock">14:41</span></div>
+              </div>
+            </div>
+
+            <div class="nstrip" style="height:122px"><div class="wallpaper"></div>
+              <div class="strip-label">② 悬停 150ms<em>黑色延伸区向两侧长出，图标只落在这里</em></div>
+              <div class="menubar">
+                <div class="mb-left"><span class="apple"></span><span class="mb-item bold">便签墙</span><span class="mb-item">文件</span><span class="mb-item">编辑</span></div>
+                <div class="notch-shell wide">
+                  <div class="wing left">
+                    <div class="nicon"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3.2v9.6M3.2 8h9.6"/></svg></div>
+                  </div>
+                  <div class="notch-phys"><span class="cam"></span></div>
+                  <div class="wing right">
+                    <div class="nicon"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.2" y="2.2" width="11.6" height="11.6" rx="2.4"/><path d="M2.2 6.4h11.6M6.4 6.4v7.4"/></svg></div>
+                  </div>
+                </div>
+                <div class="notch-guide"><span>物理刘海 168pt · 不可绘制</span></div>
+                <div class="mb-right"><span class="mb-item">◔</span><span class="mb-clock">14:41</span></div>
+              </div>
+            </div>
+
+            <div class="nstrip" style="height:366px"><div class="wallpaper"></div>
+              <div class="strip-label">③ 继续悬停 / 点击<em>面板从刘海下方展开，宽度不受刘海限制</em></div>
+              <div class="menubar">
+                <div class="mb-left"><span class="apple"></span><span class="mb-item bold">便签墙</span><span class="mb-item">文件</span><span class="mb-item">编辑</span></div>
+                <div class="notch-shell wide">
+                  <div class="wing left">
+                    <div class="nicon"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3.2v9.6M3.2 8h9.6"/></svg></div>
+                  </div>
+                  <div class="notch-phys"><span class="cam"></span></div>
+                  <div class="wing right">
+                    <div class="nicon" style="background:rgba(233,196,106,.92);color:#2A2415"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.2" y="2.2" width="11.6" height="11.6" rx="2.4"/><path d="M2.2 6.4h11.6M6.4 6.4v7.4"/></svg></div>
+                  </div>
+                </div>
+                <div class="mb-right"><span class="mb-item">◔</span><span class="mb-clock">14:41</span></div>
+              </div>
+
+              <div class="npanel show" style="top:34px">
+                <div class="np-head"><span>最近便签</span><span>工作墙</span></div>
+                <div class="nrow">
+                  <div class="dot" style="background:#CFE0F7"></div>
+                  <div class="txt"><b>这个交互要改：刘海展开时不要抢焦点</b><small>今天 14:32</small></div>
+                </div>
+                <div class="nrow">
+                  <div class="dot" style="background:#D2EDDC"></div>
+                  <div class="txt"><b>周五前要处理的三件事</b><small>2 天前 · 1/3</small></div>
+                </div>
+                <div class="nrow">
+                  <div class="dot" style="background:#F4D2DC"></div>
+                  <div class="txt"><b>优化后，便签墙终于变好看了</b><small>3 天前</small></div>
+                </div>
+                <div class="np-input">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3.2v9.6M3.2 8h9.6"/></svg>
+                  快速记一笔，回车即存
+                  <kbd>⏎</kbd>
+                </div>
+                <div class="np-foot">
+                  <span>锁定便签不会出现在这里</span>
+                  <button>打开整面墙
+                    <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3.5 2l3 3-3 3" stroke-linecap="round"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 04 DETAIL ============ -->
+        <section class="scene" data-scene="detail">
+          <div class="win">
+            <div class="titlebar">
+              <div class="lights"><i></i><i></i><i></i></div>
+              <div class="tb-title">便签墙</div>
+              <div class="tb-right">已保存</div>
+            </div>
+            <div class="sheet-wrap">
+              <div class="detail-back">
+                <div class="col">
+                  <article class="note p-pink"><div class="note-label"><span class="tag">想法</span></div><div class="note-text big">优化后，便签墙终于变好看了</div><div class="note-foot"><span class="time">3 天前</span></div></article>
+                  <article class="note p-cream"><div class="note-label"><span class="tag">资料</span></div><div class="note-text">新机器装环境，一次跑完</div><div class="code">brew install --cask raycast</div></article>
+                </div>
+                <div class="col">
+                  <article class="note p-blue"><div class="note-label"><span class="tag">资料</span></div><div class="thumb"><div class="thumb-ui"><div class="tl w40"></div><div class="tl w70"></div><div class="tl w55"></div><div class="tb"></div></div></div></article>
+                  <article class="note p-purple locked"><div class="lockable"><div class="note-text">客户那边的报价底线是 18 万。</div></div><div class="lock-badge"><span class="lk">已锁定</span></div></article>
+                </div>
+                <div class="col">
+                  <article class="note p-mint"><div class="note-label"><span class="tag">待办</span></div><div class="note-text">周五前要处理的三件事</div><div class="ck done"><span class="box"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#F7E7A6" stroke-width="1.8" stroke-linecap="round"><path d="M1.6 5.2L4 7.5l4.4-5"/></svg></span><span class="lbl">给设计稿加标注</span></div></article>
+                  <article class="note p-yellow"><div class="note-label"><span class="tag">灵感</span></div><div class="note-text big">便签不需要更聪明，只需要更快出现。</div><div class="note-foot"><span class="time">昨天 09:12</span></div></article>
+                </div>
+              </div>
+              <div class="sheet-bg"></div>
+              <div class="detail" style="--paper:#F7E7A6">
+                <div class="d-head">
+                  <div class="d-chips">
+                    <span class="d-chip">想法</span>
+                    <span class="d-chip">工作</span>
+                  </div>
+                  <div class="d-actions">
+                    <span class="d-ico">
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3.2" y="7" width="9.6" height="7" rx="1.8"/><path d="M5.6 7V5.2a2.4 2.4 0 014.8 0V7"/></svg>
+                    </span>
+                    <span class="d-ico">
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3.5 8.2v4.3h9V8.2M8 2.6v7.2M5.4 5.2L8 2.6l2.6 2.6"/></svg>
+                    </span>
+                    <span class="d-ico" style="color:rgba(42,39,30,.7)">
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="13" cy="8" r="1.2"/></svg>
+                    </span>
+                  </div>
+                </div>
+
+                <div class="d-title">这个交互要改：刘海展开时不要抢焦点</div>
+                <div class="d-body">否则正在打的字就断了。参考 NotchNook：面板用 non-activating，展开与收起都不激活 App。<br>另外悬停延迟别低于 150ms，误触太多。</div>
+                <div class="d-thumb"></div>
+
+                <div class="d-foot">
+                  <span>添加于 今天 14:32 · 编辑于 2 分钟前</span>
+                  <div class="right">
+                    <span style="opacity:.6">⌘S</span>
+                    <span class="d-save">保存</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 05 LOCK ============ -->
+        <section class="scene" data-scene="lock">
+          <div class="win">
+            <div class="titlebar">
+              <div class="lights"><i></i><i></i><i></i></div>
+              <div class="tb-title">便签墙</div>
+              <div class="tb-right">已保存</div>
+            </div>
+            <div class="win-body">
+              <header class="wall-head">
+                <div>
+                  <h1>便签墙</h1>
+                  <p>每个灵感，都值得记下。便签自动保存。</p>
+                </div>
+                <div class="head-tools">
+                  <label class="search">
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.4"/><path d="M10.4 10.4L14 14" stroke-linecap="round"/></svg>
+                    <input placeholder="搜索便签">
+                  </label>
+                  <span class="count">8 张便签</span>
+                </div>
+              </header>
+              <div class="wallbar">
+                <div class="tabs">
+                  <button class="tab active">全部</button>
+                  <button class="tab">我的便签</button>
+                  <button class="tab">工作</button>
+                  <button class="tab">灵感</button>
+                  <button class="tab">选题库</button>
+                </div>
+                <div class="wallbar-right"><button class="chip">最新 ↓</button></div>
+              </div>
+
+              <div class="masonry" id="lockMasonry" style="margin-top:18px">
+                <article class="note p-purple locked" id="lockTarget" data-wall="work">
+                  <div class="note-label"><span class="tag">资料</span></div>
+                  <div class="lockable">
+                    <div class="note-text">客户那边的报价底线是 18 万，超过就要走二次审批，别在群里提。</div>
+                  </div>
+                  <div class="lock-badge"><span class="lk">
+                    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3.2" y="7" width="9.6" height="7" rx="1.8"/><path d="M5.6 7V5.2a2.4 2.4 0 014.8 0V7"/></svg>
+                    已锁定 · 点击解锁</span></div>
+                  <div class="note-foot"><span class="time">昨天 21:05</span></div>
+                </article>
+                <article class="note p-pink" data-wall="idea">
+                  <div class="note-label"><span class="tag">想法</span></div>
+                  <div class="note-text big">优化后，便签墙终于变好看了</div>
+                  <div class="note-foot"><span class="time">3 天前</span></div>
+                </article>
+                <article class="note p-blue" data-wall="work">
+                  <div class="note-label"><span class="tag">资料</span></div>
+                  <div class="thumb"><div class="thumb-ui"><div class="tl w40"></div><div class="tl w70"></div><div class="tl w55"></div><div class="tb"></div></div></div>
+                  <div class="note-text">这个交互要改：刘海展开时不要抢焦点</div>
+                  <div class="note-foot"><span class="time">今天 14:32</span></div>
+                </article>
+                <article class="note p-mint" data-wall="work">
+                  <div class="note-label"><span class="tag">待办</span></div>
+                  <div class="note-text">周五前要处理的三件事</div>
+                  <div class="ck done"><span class="box"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#F7E7A6" stroke-width="1.8" stroke-linecap="round"><path d="M1.6 5.2L4 7.5l4.4-5"/></svg></span><span class="lbl">给设计稿加标注</span></div>
+                  <div class="ck"><span class="box"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#F7E7A6" stroke-width="1.8" stroke-linecap="round"><path d="M1.6 5.2L4 7.5l4.4-5"/></svg></span><span class="lbl">改完原型里的三段文案</span></div>
+                  <div class="note-foot"><span class="time">2 天前</span><span class="prog">1/2</span></div>
+                </article>
+                <article class="note p-purple" data-wall="idea">
+                  <div class="note-label"><span class="tag">想法</span></div>
+                  <div class="note-text">搜索框可以支持「有图」这种语法，比点筛选快。</div>
+                  <div class="note-foot"><span class="time">本周一</span></div>
+                </article>
+                <article class="note p-cream" data-wall="topic">
+                  <div class="note-label"><span class="tag">参考</span></div>
+                  <div class="note-text">NotchNook 的面板展开用弹簧曲线，收起用 ease-out，手感差别很明显。</div>
+                  <div class="note-foot"><span class="time">11月4日</span></div>
+                </article>
+                <article class="note p-yellow" data-wall="idea">
+                  <div class="note-label"><span class="tag">灵感</span></div>
+                  <div class="note-text big">别做第二个备忘录，做一张真的墙。</div>
+                  <div class="note-foot"><span class="time">10月30日</span></div>
+                </article>
+                <article class="note p-pink" data-wall="idea">
+                  <div class="note-label"><span class="tag">灵感</span></div>
+                  <div class="note-text big">便签不需要更聪明，只需要更快出现。</div>
+                  <div class="note-foot"><span class="time">昨天 09:12</span></div>
+                </article>
+                <article class="note p-cream" data-wall="topic">
+                  <div class="note-label"><span class="tag">资料</span></div>
+                  <div class="note-text">新机器装环境，一次跑完</div>
+                  <div class="code">brew install --cask \
+  raycast rectangle arc</div>
+                  <div class="note-foot"><span class="time">11月2日</span></div>
+                </article>
+              </div>
+            </div>
+
+            <div class="tid-scrim" id="tidScrim"></div>
+            <div class="tid" id="tidBox">
+              <div class="fp">
+                <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+                  <path d="M32 8c-6 0-11 2-15 5"/>
+                  <path d="M8 26c1-5 3-9 6-12"/>
+                  <path d="M56 26c-1-5-3-9-6-12"/>
+                  <path d="M32 18c-9 0-16 7-16 16 0 5 .6 9 2 13"/>
+                  <path d="M32 18c9 0 16 7 16 16 0 6-1 11-3 15"/>
+                  <path d="M26 34c0-3.4 2.7-6 6-6s6 2.6 6 6c0 7-1 13-3 18"/>
+                  <path d="M22 50c1-3 1.6-6 1.6-9"/>
+                  <path d="M38 34c0 5-.7 9-2 13"/>
+                </svg>
+              </div>
+              <h3>便签墙 想要解锁这条便签</h3>
+              <p>使用 Touch ID 或输入设备密码<br>解锁后 5 分钟内不再验证</p>
+              <div class="status" id="tidStatus">验证通过</div>
+              <div class="tid-btns">
+                <button>取消</button>
+                <button class="primary" id="tidOk">使用 Touch ID</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 06 SETTINGS ============ -->
+        <section class="scene" data-scene="settings">
+          <div class="win">
+            <div class="titlebar">
+              <div class="lights"><i></i><i></i><i></i></div>
+              <div class="tb-title">设置</div>
+              <div class="tb-right"></div>
+            </div>
+            <div class="prefs">
+              <div class="prefs-side">
+                <div class="grp">便签墙</div>
+                <button class="p-item active" data-panel="general">通用</button>
+                <button class="p-item" data-panel="keys">快捷键</button>
+                <button class="p-item" data-panel="security">安全</button>
+                <button class="p-item" data-panel="data">数据</button>
+                <div class="grp" style="margin-top:14px">关于</div>
+                <button class="p-item">版本 0.1 · 本地</button>
+              </div>
+              <div class="prefs-main">
+                <div class="panel" data-panel="general">
+                  <h2>通用</h2>
+                  <div class="pgroup">
+                    <div class="prow"><div class="lbl"><b>开机自动启动</b></div><div class="toggle on"></div></div>
+                    <div class="prow"><div class="lbl"><b>显示菜单栏图标</b><small>无刘海设备的主要入口</small></div><div class="toggle on"></div></div>
+                    <div class="prow"><div class="lbl"><b>刘海入口</b><small>悬停刘海时展开便签墙</small></div><div class="toggle on"></div></div>
+                    <div class="prow"><div class="lbl"><b>全屏 App 中显示刘海</b><small>默认关闭，避免遮挡</small></div><div class="toggle"></div></div>
+                    <div class="prow"><div class="lbl"><b>显示清单进度</b><small>卡片底部显示 1/3</small></div><div class="toggle on"></div></div>
+                  </div>
+
+                  <h2 style="margin-top:22px">颜色含义</h2>
+                  <div class="pgroup">
+                    <div class="prow">
+                      <div class="lbl"><b>默认不绑定含义</b><small>给颜色起名后，筛选器会显示这个名字</small></div>
+                      <div class="colorrow">
+                        <span class="c" style="background:#F7E7A6"></span><span class="c" style="background:#F4D2DC"></span>
+                        <span class="c" style="background:#CFE0F7"></span><span class="c" style="background:#D2EDDC"></span>
+                        <span class="c" style="background:#E2D8F5"></span><span class="c" style="background:#F0E8DA"></span>
+                      </div>
+                    </div>
+                    <div class="prow"><div class="lbl"><b>粉色</b><small>未命名</small></div><span style="font-size:11.5px;color:var(--dim-2)">点击命名…</span></div>
+                  </div>
+                </div>
+
+                <div class="panel" data-panel="keys" style="display:none">
+                  <h2>快捷键</h2>
+                  <div class="pgroup">
+                    <div class="prow">
+                      <div class="lbl"><b>新建便签</b><small>任何 App 前台都可用</small></div>
+                      <div class="keyrow"><span class="keycap">⌥</span><span class="keycap">Space</span></div>
+                    </div>
+                    <div class="prow">
+                      <div class="lbl"><b>打开便签墙</b><small>再次按下隐藏</small></div>
+                      <div class="keyrow"><span class="keycap">⌥</span><span class="keycap">⇧</span><span class="keycap">Space</span></div>
+                    </div>
+                    <div class="prow">
+                      <div class="lbl"><b>锁定 / 解锁便签</b></div>
+                      <div class="keyrow"><span class="keycap">⌘</span><span class="keycap">⇧</span><span class="keycap">L</span></div>
+                    </div>
+                    <div class="prow">
+                      <div class="lbl"><b>切换时间排序</b><small>正序 / 倒序</small></div>
+                      <div class="keyrow"><span class="keycap">⌘</span><span class="keycap">⇧</span><span class="keycap">↑</span><span class="keycap">↓</span></div>
+                    </div>
+                  </div>
+                  <div style="font-size:11px;color:var(--dim-2);line-height:1.7;margin-top:6px">
+                    检测到 Raycast 占用了 ⌥Space，已自动避开；如需强制使用，可在上方直接录制。
+                  </div>
+                </div>
+
+                <div class="panel" data-panel="security" style="display:none">
+                  <h2>安全</h2>
+                  <div class="pgroup">
+                    <div class="prow"><div class="lbl"><b>解锁有效期</b><small>超时后自动重新上锁</small></div>
+                      <div class="seg"><button>1 分钟</button><button class="on">5 分钟</button><button>30 分钟</button><button>每次</button></div>
+                    </div>
+                    <div class="prow"><div class="lbl"><b>隐藏锁定便签</b><small>墙内完全不显示，需用 锁: 语法调出</small></div><div class="toggle"></div></div>
+                    <div class="prow"><div class="lbl"><b>锁定便签不参与同步与导出</b><small>密钥仅存本机钥匙串，换机不可恢复</small></div><div class="toggle on"></div></div>
+                  </div>
+                  <div style="font-size:11px;color:var(--dim-2);line-height:1.8;margin-top:6px">
+                    锁定内容以 AES-256-GCM 加密后落盘，密钥存放在系统钥匙串并绑定 Touch ID。<br>
+                    这能防止他人瞄到屏幕或临时借用你的 Mac，但无法防御已取得你账户权限的攻击者 —— 建议同时开启 FileVault。
+                  </div>
+                </div>
+
+                <div class="panel" data-panel="data" style="display:none">
+                  <h2>数据</h2>
+                  <div class="pgroup">
+                    <div class="prow"><div class="lbl"><b>存储占用</b><small>8 张便签 · 3 张图片</small></div><span style="font-size:12px;color:var(--dim)">128 MB</span></div>
+                    <div class="prow"><div class="lbl"><b>导出</b><small>JSON / Markdown，跳过锁定便签</small></div><button style="font-size:12px;color:var(--accent)">导出…</button></div>
+                    <div class="prow"><div class="lbl"><b>回收站</b><small>删除的便签保留 30 天</small></div><button style="font-size:12px;color:var(--dim)">清空</button></div>
+                    <div class="prow"><div class="lbl"><b>数据位置</b><small>~/Library/Application Support/NoteWall</small></div><button style="font-size:12px;color:var(--dim)">在访达中显示</button></div>
+                  </div>
+                  <div style="font-size:11px;color:var(--dim-2);margin-top:6px;line-height:1.7">全部数据保存在本机，无网络请求，无账号。</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 07 ONBOARDING ============ -->
+        <section class="scene" data-scene="onboarding">
+          <div class="win">
+            <div class="titlebar">
+              <div class="lights"><i></i><i></i><i></i></div>
+              <div class="tb-title">便签墙</div>
+              <div class="tb-right">已保存</div>
+            </div>
+            <div class="win-body">
+              <header class="wall-head">
+                <div>
+                  <h1>便签墙</h1>
+                  <p>每个灵感，都值得记下。便签自动保存。</p>
+                </div>
+                <div class="head-tools">
+                  <label class="search">
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.4"/><path d="M10.4 10.4L14 14" stroke-linecap="round"/></svg>
+                    <input placeholder="搜索便签">
+                  </label>
+                  <span class="count">2 张便签</span>
+                </div>
+              </header>
+
+              <div class="wallbar">
+                <div class="tabs">
+                  <button class="tab active">我的便签</button>
+                  <button class="tab add">＋</button>
+                </div>
+                <div class="wallbar-right"><button class="chip">最新 ↓</button></div>
+              </div>
+
+              <div class="tipbar">
+                <span>按 <b>⌥ Space</b> 随时记一笔，按 <b>⌘ ↩</b> 收下。</span>
+                <span class="sp">
+                  <button>清空示例</button>
+                  <button style="color:var(--accent)">知道了</button>
+                </span>
+              </div>
+
+              <div class="ob">
+                <article class="note p-yellow">
+                  <div class="note-label"><span class="tag">灵感</span><span class="sample-tag">示例</span></div>
+                  <div class="note-text big">一句话也能贴，一张图也能贴，<br>文字和图片可以同时在一张便签上。</div>
+                  <div class="thumb photo" style="height:78px;margin-top:12px"></div>
+                  <div class="note-foot"><span class="time">刚刚</span></div>
+                </article>
+
+                <article class="note p-mint">
+                  <div class="note-label"><span class="tag">待办</span><span class="sample-tag">示例</span></div>
+                  <div class="note-text" style="margin-bottom:6px">点一下方框就能打勾</div>
+                  <div class="ck done"><span class="box"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#D2EDDC" stroke-width="1.8" stroke-linecap="round"><path d="M1.6 5.2L4 7.5l4.4-5"/></svg></span><span class="lbl">试试勾选这一行</span></div>
+                  <div class="ck"><span class="box"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#D2EDDC" stroke-width="1.8" stroke-linecap="round"><path d="M1.6 5.2L4 7.5l4.4-5"/></svg></span><span class="lbl">勾完不会沉底</span></div>
+                  <div class="note-foot"><span class="time">刚刚</span><span class="prog">1/2</span></div>
+                </article>
+
+                <div class="guide">
+                  <div class="guide-h">三步就上手</div>
+                  <div class="g-row">
+                    <span class="k">⌥ Space</span>
+                    <div><b>随手记一笔</b><span>在任何 App 里唤起，光标已经就位</span></div>
+                  </div>
+                  <div class="g-row">
+                    <span class="k">⌘ V</span>
+                    <div><b>粘一张截图</b><span>直接变成图片便签，不用先存文件</span></div>
+                  </div>
+                  <div class="g-row">
+                    <span class="k">⌘ ⇧ Space</span>
+                    <div><b>打开整面墙</b><span>鼠标推到刘海，也能立刻展开</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="drop">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="4" width="18" height="16" rx="2.4"/><circle cx="8.6" cy="9.6" r="1.5"/><path d="M3.4 17.2l4.9-4.6 3.6 3.4 3-2.7 5.7 5.3"/>
+                </svg>
+                <b>把截图或图片直接拖进来</b>
+                <span>就是一张图片便签 · 上面的示例随时可以清空</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+/* ---------- scene switching ---------- */
+const scenes = [...document.querySelectorAll('.scene')];
+const btns = [...document.querySelectorAll('.scene-btn')];
+function go(name){
+  scenes.forEach(s=>s.classList.toggle('active', s.dataset.scene===name));
+  btns.forEach(b=>b.classList.toggle('active', b.dataset.go===name));
+  if(name==='wall') requestAnimationFrame(renderNotes);
+  if(name==='lock') requestAnimationFrame(layoutLock);
+  history.replaceState(null,'','#'+name);
+}
+btns.forEach(b=>b.addEventListener('click',()=>go(b.dataset.go)));
+window.addEventListener('DOMContentLoaded',()=>{
+  const q=new URLSearchParams(location.search);
+  if(q.get('theme')==='light') document.documentElement.dataset.theme='light';
+  if(q.get('anim')==='0') document.documentElement.classList.add('no-anim');
+  const h=location.hash.replace('#','');
+  if(h && scenes.some(s=>s.dataset.scene===h)) go(h);
+});
+document.addEventListener('keydown',e=>{
+  if((e.metaKey||e.ctrlKey) && /^[1-7]$/.test(e.key)){
+    e.preventDefault();
+    const b=btns[+e.key-1]; if(b) go(b.dataset.go);
+  }
+});
+
+/* ---------- theme ---------- */
+document.getElementById('themeBtn').addEventListener('click',()=>{
+  const html=document.documentElement;
+  html.dataset.theme = html.dataset.theme==='dark' ? 'light' : 'dark';
+});
+
+/* ---------- fit stage ---------- */
+const stage=document.getElementById('stage'), frame=document.getElementById('frame'), wrap=document.getElementById('wrap');
+function fit(){
+  const s=Math.min((stage.clientWidth-56)/1180,(stage.clientHeight-56)/760,1.02);
+  frame.style.transform=`scale(${s})`;
+  wrap.style.width=1180*s+'px';
+  wrap.style.height=760*s+'px';
+}
+window.addEventListener('resize',fit); fit();
+
+/* ---------- masonry ---------- */
+const masonry=document.getElementById('masonry');
+const allNotes=[...masonry.querySelectorAll('.note')];
+let activeWall='all', query='', sortDir=-1;
+
+function makeCols(container){
+  container.innerHTML='';
+  return [0,1,2].map(()=>{const d=document.createElement('div');d.className='col';container.appendChild(d);return d;});
+}
+function flow(container, notes){
+  const cols=makeCols(container);
+  notes.forEach(n=>{
+    const t=cols.reduce((a,b)=> a.offsetHeight<=b.offsetHeight ? a : b);
+    t.appendChild(n);
+  });
+}
+function renderNotes(){
+  const list=allNotes.filter(n=>{
+    const okWall = activeWall==='all' || n.dataset.wall===activeWall;
+    const txt=(n.dataset.text||'').toLowerCase();
+    const okQ = !query || txt.includes(query.toLowerCase());
+    return okWall && okQ;
+  });
+  list.sort((a,b)=> sortDir===-1 ? (Number(b.dataset.ts)-Number(a.dataset.ts)) : (Number(a.dataset.ts)-Number(b.dataset.ts)));
+  flow(masonry, list);
+  setCount(list.length);
+}
+function layoutLock(){
+  const lm=document.getElementById('lockMasonry');
+  if(!lm) return;
+  flow(lm, [...lm.querySelectorAll('.note')]);
+}
+function setCount(n){ document.getElementById('count').textContent=`${n} 张便签`; }
+
+/* 初始渲染 */
+renderNotes(); layoutLock();
+window.addEventListener('load',()=>{ renderNotes(); layoutLock(); fit(); });
+
+/* ---------- wall tabs ---------- */
+document.getElementById('tabs').addEventListener('click',e=>{
+  const t=e.target.closest('.tab'); if(!t||t.classList.contains('add'))return;
+  [...document.querySelectorAll('#tabs .tab')].forEach(x=>x.classList.remove('active'));
+  t.classList.add('active'); activeWall=t.dataset.wall; renderNotes();
+});
+
+/* ---------- sort ---------- */
+const sortBtn=document.getElementById('sortBtn');
+sortBtn.addEventListener('click',()=>{
+  sortDir=sortDir===-1?1:-1;
+  sortBtn.textContent = sortDir===-1 ? '最新 ↓' : '最早 ↑';
+  renderNotes();
+});
+
+/* ---------- search ---------- */
+document.getElementById('search').addEventListener('input',e=>{
+  query=e.target.value.trim(); renderNotes();
+});
+
+/* ---------- composer ---------- */
+const composer=document.getElementById('composer');
+const composerText=document.getElementById('composerText');
+let paperVal='#F7E7A6', inkVal='#2C2718';
+document.getElementById('swatches').addEventListener('click',e=>{
+  const s=e.target.closest('.sw'); if(!s)return;
+  document.querySelectorAll('#swatches .sw').forEach(x=>x.classList.remove('active'));
+  s.classList.add('active');
+  paperVal=s.dataset.paper; inkVal=s.dataset.ink;
+  composer.style.setProperty('--paper',paperVal);
+  composer.style.setProperty('--ink',inkVal);
+});
+
+function nowLabel(){
+  const d=new Date();
+  return `今天 ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+function addNote(){
+  const v=composerText.value.trim(); if(!v) { composerText.focus(); return; }
+  const el=document.createElement('article');
+  el.className='note'; el.dataset.ts=Date.now(); el.dataset.wall=activeWall==='all'?'mine':activeWall;
+  el.dataset.text=v+' 想法'; el.style.setProperty('--paper',paperVal); el.style.setProperty('--ink',inkVal);
+  el.innerHTML=`<div class="note-label"><span class="tag">想法</span></div>
+    <div class="note-text">${v.replace(/[<>&]/g,'')}</div>
+    <div class="note-foot"><span class="time">${nowLabel()}</span><span class="edit">✎</span></div>`;
+  allNotes.unshift(el);
+  composerText.value=''; activeWall='all'; query='';
+  document.getElementById('search').value='';
+  [...document.querySelectorAll('#tabs .tab')].forEach(x=>x.classList.toggle('active',x.dataset.wall==='all'));
+  renderNotes(); toast('已贴到墙上');
+}
+document.getElementById('addBtn').addEventListener('click',addNote);
+composerText.addEventListener('keydown',e=>{
+  if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){ e.preventDefault(); addNote(); }
+});
+let toastTimer;
+function toast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),1600);
+}
+
+/* ---------- checklist ---------- */
+document.addEventListener('click',e=>{
+  const ck=e.target.closest('.ck'); if(!ck)return;
+  ck.classList.toggle('done');
+  const card=ck.closest('.note'); if(!card)return;
+  const all=[...card.querySelectorAll('.ck')], done=all.filter(x=>x.classList.contains('done')).length;
+  const prog=card.querySelector('.prog'); if(prog) prog.textContent=`${done}/${all.length}`;
+});
+
+/* ---------- touch id ---------- */
+const lockTarget=document.getElementById('lockTarget');
+const tidBox=document.getElementById('tidBox');
+const tidScrim=document.getElementById('tidScrim');
+function showTid(v){
+  if(tidBox) tidBox.style.display = v?'block':'none';
+  if(tidScrim) tidScrim.style.display = v?'block':'none';
+}
+if(lockTarget){
+  lockTarget.addEventListener('click',()=>{ if(lockTarget.classList.contains('locked')) showTid(true); });
+  tidBox.querySelector('button:not(.primary)').addEventListener('click',()=>showTid(false));
+  tidScrim.addEventListener('click',()=>showTid(false));
+  document.getElementById('tidOk').addEventListener('click',()=>{
+    const st=document.getElementById('tidStatus'); st.classList.add('show');
+    setTimeout(()=>{
+      lockTarget.classList.remove('locked');
+      const badge=lockTarget.querySelector('.lock-badge'); if(badge) badge.remove();
+      st.classList.remove('show'); showTid(false);
+    },900);
+  });
+}
+
+/* ---------- settings panels ---------- */
+document.querySelectorAll('.p-item[data-panel]').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.p-item').forEach(x=>x.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.prefs-main .panel').forEach(p=>{
+      p.style.display = p.dataset.panel===btn.dataset.panel ? 'block' : 'none';
+    });
+  });
+});
+</script>
+</body>
+</html>
