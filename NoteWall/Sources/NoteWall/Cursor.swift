@@ -74,6 +74,26 @@ import AppKit
 /// 「活垫片在场」的前提。现在：
 /// - 命中只能来自真实垫片或 sticky 记忆，没有第三条凭空判真的路；
 /// - EdgePanel 窗口里的垫片一律不命中（防回归闸）。
+///
+/// ## v0.9.17：手型是从边缘面板「下面」漏上来的
+///
+/// v0.9.16 之后真机仍复现：悬停边缘面板会亮手型、点击时箭头/手型互闪。
+/// 根因不在边缘窗口自己（它确实一张垫片都没注册），而在命中判定只问
+/// 「点落在哪个垫片的屏幕矩形里」，不问「那个垫片在不在最上面」：
+/// 边缘面板是 floating 层、盖在主窗口之上，只要主窗口有按钮垫片正好位于
+/// 面板 footprint 之下（扇开时约 54pt 宽、抽出时约 388pt 宽，太常见了），
+/// 指着面板就等于指着那张被盖住的垫片 → hit=true → 手型亮起；点击时
+/// `pull()` 改 frame、垫片跟着移位，hit 帧帧翻转，reassert 又与 AppKit
+/// 的 cursor rect 互拨——正是用户看到的整套症状。`--clickfliptest` 没测到，
+/// 是因为它的对照垫片远离面板、面板底下没有任何垫片。
+///
+/// 修法（用户拍板：边缘窗口全程默认光标，不再尝试把手型修好）：
+/// - tick 开头先判「指针处最上层窗口是不是 EdgePanel」：是 → 手型系统
+///   整体退出本帧——清 sticky、状态机复位、光标落回默认（抽出态文本区
+///   仍走 I 形，那是编辑器的默认光标，不是手型）；
+/// - reassert 同样加这道闸：指针在边缘面板上时不许把手型钉回去；
+/// - 命中枚举再补一层遮挡过滤：被 EdgePanel 盖住的垫片不算命中。
+/// 三层下去，无论面板底下压着什么垫片，边缘窗口上都没有手型的点亮路径。
 struct HandCursorLogic {
     enum Action: Equatable { case none, toHand, toArrow }
 
@@ -247,6 +267,15 @@ final class HandCursorRegistry {
         v.window is EdgePanel
     }
 
+    /// v0.9.17：指针处最上层的窗口是不是边缘面板。
+    /// tick 与 reassert 共用：只要面板压在最上面，手型系统就整体让位——
+    /// 面板底下垫片的「命中」是隔着窗口漏上来的，不作数。
+    private func isEdgePanelTopmost(at p: NSPoint) -> Bool {
+        let number = NSWindow.windowNumber(at: p, belowWindowWithWindowNumber: 0)
+        guard number > 0 else { return false }
+        return NSApp.windows.contains { $0.windowNumber == number && $0 is EdgePanel }
+    }
+
     /// 事件处理完之后重申：状态机还认定在可点区域上，就把光标钉回手型。
     ///
     /// **不要再加几何闸门**：点击时 SwiftUI 会销毁重建垫片，上次命中的矩形在那一两帧里
@@ -257,6 +286,8 @@ final class HandCursorRegistry {
     ///   runloop 观察者走 false，只在真被改掉时才补，避免每轮 runloop 都发一次 CGS 调用。
     private func reassert(force: Bool = true) {
         guard logic.isHand else { return }
+        // v0.9.17：指针在边缘面板上时不许重申手型（与 tick 的同名闸成对）
+        if isEdgePanelTopmost(at: NSEvent.mouseLocation) { return }
         if !force, NSCursor.current === NSCursor.pointingHand { return }
         reasserts += 1
         NSCursor.pointingHand.set()
@@ -312,6 +343,25 @@ final class HandCursorRegistry {
             || abs(p.x - lastPoint.x) > 6 || abs(p.y - lastPoint.y) > 6
         forceMove = false
         lastPoint = p
+
+        // v0.9.17：指针在边缘面板上 → 手型系统整体退出这一帧，不走下面的
+        // 迟滞判定（迟滞是给主窗口防抖的，在这里只会让手型多赖几帧）。
+        // 面板底下压着的主窗口垫片会被无遮挡感知的命中判定算成命中，
+        // 手型就是这么漏上来的（见 HandCursorLogic 上方的版本说明）。
+        if isEdgePanelTopmost(at: p) {
+            lastHitScreenRect = nil
+            let wasHand = logic.isHand
+            if wasHand {
+                logic.reset()
+                arrowSwitches += 1
+            }
+            // 状态机与真实光标分家时（进程内记着箭头、屏幕上却是手型）也一并纠正
+            if wasHand || NSCursor.current === NSCursor.pointingHand {
+                restoreCursorBelow(p)
+            }
+            lastTickDebug = "edgeTop=true hand=false p=\(Int(p.x)),\(Int(p.y))"
+            return
+        }
 
         // 别的 App 的窗口压在上面：立刻收（不看鼠标动没动，否则切 App 会卡住手型）
         let covered = isCovered(at: p)
@@ -402,6 +452,9 @@ final class HandCursorRegistry {
         for case let v as NSView in views.allObjects {
             guard let win = v.window, win.isVisible, !v.isHiddenOrHasHiddenAncestor else { continue }
             if isEdgePanel(v) { continue }   // 边缘窗口不接手型（v0.9.16 防御闸）
+            // v0.9.17：垫片被边缘面板盖住（面板层级更高且覆盖此点）时不算命中
+            if NSApp.windows.contains(where: { $0 is EdgePanel && $0.isVisible
+                && $0.level.rawValue > win.level.rawValue && $0.frame.contains(p) }) { continue }
             let r = Self.windowRect(of: v)
             guard r.width > 1, r.height > 1 else { continue }
             let screen = win.convertToScreen(r)
