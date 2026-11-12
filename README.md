@@ -7,7 +7,6 @@
 需要 macOS 14 或更新版本，以及支持 Swift 5.9 的 Xcode 或命令行工具。
 
 ```bash
-cd NoteWall
 ./build.sh
 open 便签墙.app
 ```
@@ -16,7 +15,7 @@ open 便签墙.app
 
 ## 项目资料
 
-- [应用开发与自检](NoteWall/README.md)
-- [已有测试记录](NoteWall/TEST-REPORT.md)
-- [产品需求](PRD-便签墙-v0.4.md)
-- [主界面高保真原型](prototype/index.html) · [屏幕边缘条原型](prototype/edge-deck.html) · [原型截图](prototype/shots/)
+- [应用开发与自检](docs/开发自检.md)
+- [已有测试记录](docs/TEST-REPORT.md)
+- [产品需求](docs/PRD-便签墙-v0.4.md)
+- [主界面高保真原型](docs/prototype/index.html) · [屏幕边缘条原型](docs/prototype/edge-deck.html) · [原型截图](docs/prototype/shots/)
