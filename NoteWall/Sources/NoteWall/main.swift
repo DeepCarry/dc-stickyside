@@ -1213,6 +1213,72 @@ if args.contains("--clickfliptest") {
     }
 }
 
+// 一键复制（v0.9.18）：文字 + 图片一起进剪贴板，锁定便签拒绝复制。
+// 用独立命名的剪贴板，不污染用户正在用的那块。
+if args.contains("--copytest") {
+    MainActor.assumeIsolated {
+        _ = NSApplication.shared
+        var failures = 0
+        func check(_ name: String, _ ok: Bool, _ detail: String = "") {
+            print(ok ? "✓ \(name)" : "✗ \(name)\(detail.isEmpty ? "" : "  ← \(detail)")")
+            if !ok { failures += 1 }
+        }
+        let pb = NSPasteboard(name: NSPasteboard.Name("notewall-copytest"))
+
+        // 纯文字便签
+        var n1 = Note(wallID: UUID())
+        n1.text = "一键复制测试文字"
+        let r1 = NoteCopy.copy(n1, to: pb)
+        check("纯文字：结果为 textOnly", r1 == .textOnly)
+        check("纯文字：剪贴板里是原文", pb.string(forType: .string) == "一键复制测试文字")
+
+        // 图文便签：造一张小图存进 ImageStore，再挂到便签上
+        let img = NSImage(size: NSSize(width: 8, height: 8))
+        img.lockFocus()
+        NSColor.red.setFill()
+        NSRect(x: 0, y: 0, width: 8, height: 8).fill()
+        img.unlockFocus()
+        if let saved = ImageStore.save(img) {
+            var n2 = Note(wallID: UUID())
+            n2.text = "图文便签"
+            n2.image = saved
+            let r2 = NoteCopy.copy(n2, to: pb)
+            check("图文：结果为 textAndImage", r2 == .textAndImage)
+            check("图文：纯文本表示在", pb.string(forType: .string) == "图文便签")
+            check("图文：PNG 表示在", (pb.data(forType: .png)?.count ?? 0) > 0)
+            check("图文：RTFD 表示在", (pb.data(forType: .rtfd)?.count ?? 0) > 0)
+            ImageStore.delete(saved)
+        } else {
+            check("图文：测试图片存入 ImageStore", false)
+        }
+
+        // 纯图片便签（旧「复制文字」对它无能为力）
+        if let saved = ImageStore.save(img) {
+            var n3 = Note(wallID: UUID())
+            n3.image = saved
+            let r3 = NoteCopy.copy(n3, to: pb)
+            check("纯图片：结果为 imageOnly", r3 == .imageOnly)
+            check("纯图片：PNG 表示在", (pb.data(forType: .png)?.count ?? 0) > 0)
+            ImageStore.delete(saved)
+        } else {
+            check("纯图片：测试图片存入 ImageStore", false)
+        }
+
+        // 锁定便签：拒绝复制，且不许动剪贴板原有内容
+        pb.clearContents()
+        pb.setString("哨兵", forType: .string)
+        var n4 = Note(wallID: UUID())
+        n4.text = "密文占位"
+        n4.isLocked = true
+        let r4 = NoteCopy.copy(n4, to: pb)
+        check("锁定：结果为 nothing", r4 == .nothing)
+        check("锁定：剪贴板未被改动", pb.string(forType: .string) == "哨兵")
+
+        print(failures == 0 ? "copytest 全部通过" : "copytest \(failures) 项失败")
+        exit(failures == 0 ? 0 : 1)
+    }
+}
+
 // 手型光标：SwiftUI 按钮默认是箭头，统一给可点击区域注册 pointingHand cursor rect。
 // 断言覆盖「注册生效 / 点击穿透 / 输入框仍是 I 形 / 各窗口都有覆盖」。
 if args.contains("--hovertest") {
