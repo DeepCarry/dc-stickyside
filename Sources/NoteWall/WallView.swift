@@ -106,6 +106,10 @@ struct WallView: View {
                     AppContext.shared.pendingOpenSettings = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { ui.showSettings = true }
                 }
+                // 刘海「在便签墙中打开」同理，靠旗子兜住刚重建的窗口
+                if AppContext.shared.pendingDetailNoteID != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { openPendingDetail() }
+                }
             }
             // 墙窗口已经开着时的快路：菜单栏点「设置…」直接把 sheet 弹出来
             .onReceive(NotificationCenter.default.publisher(for: .noteWallOpenSettings)) { _ in
@@ -113,6 +117,20 @@ struct WallView: View {
                 AppContext.shared.pendingOpenSettings = false
                 ui.showSettings = true
             }
+            // 墙窗口已经开着时的快路：刘海点「在便签墙中打开」直接弹该便签的详情
+            .onReceive(NotificationCenter.default.publisher(for: .noteWallOpenDetail)) { _ in
+                openPendingDetail()
+            }
+    }
+
+    /// 消费刘海留下的「打开这条便签详情」旗子。便签已被删 / 查不到就静默放弃；
+    /// 刘海列表不含锁定便签，这里不需要走解锁流程。
+    private func openPendingDetail() {
+        guard let id = AppContext.shared.pendingDetailNoteID else { return }
+        AppContext.shared.pendingDetailNoteID = nil
+        guard let note = store.notes.first(where: { $0.id == id }), note.deletedAt == nil else { return }
+        ui.editing = note
+        ui.showDetail = true
     }
 }
 

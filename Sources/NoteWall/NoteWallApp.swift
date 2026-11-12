@@ -16,12 +16,16 @@ final class AppContext {
     /// 菜单栏点了「设置…」，但墙窗口是刚重建的、还没注册监听时的旗子。
     /// 由 `WallView` 在 `onAppear` 里消费；不清掉会导致下次开窗口又弹一次设置。
     var pendingOpenSettings = false
+    /// 刘海里点「在便签墙中打开」时要打开的便签 id；消费方式同 pendingOpenSettings。
+    var pendingDetailNoteID: UUID? = nil
     private init() {}
 }
 
 extension Notification.Name {
     /// 菜单栏「设置…」→ 墙窗口弹设置 sheet
     static let noteWallOpenSettings = Notification.Name("NoteWall.openSettings")
+    /// 刘海「在便签墙中打开」→ 墙窗口弹该便签的详情 sheet
+    static let noteWallOpenDetail = Notification.Name("NoteWall.openDetail")
 }
 
 struct NoteWallApp: App {

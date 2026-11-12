@@ -21,6 +21,12 @@ import AppKit
 // 让卡片读起来仍是「刘海长大了」。完全等比只适用于无内容的点击态——装下 5 条便签
 // 需要约 250pt 高，等比放大到这个高度宽度会超过 1300pt，不成立；NotchNook、
 // Boring Notch 等同类产品的展开面板同样是「顶部贴合刘海 + 圆角成比例 + 身体按内容长高」。
+//
+// v0.2.3 行操作与详情（Carry 验收 0.2.2 后定案）：每行悬停浮现复制 / 删除两个按钮
+// （编辑不设按钮——点行本身就是打开这条）；点行在面板内切到详情页（正文全显、
+// 清单可打勾、底部复制 / 在墙中打开 / 删除），深度编辑经 AppContext 旗子跳墙内
+// 现成的 NoteDetailSheet。顺带修 0.2.2 两处：行背景未拉满卡宽、清单行首标记未剥净。
+
 
 
 // MARK: - 几何
@@ -55,6 +61,7 @@ struct NotchGeometry {
     static let shoulderRadius: CGFloat = 10     // 卡片顶部两肩的贴合圆角
     static let rowH: CGFloat = 38               // 最近便签单行高度
     static let maxListNotes = 5                 // 刘海列表最多显示条数
+    static let detailHeight: CGFloat = 400      // 详情页展开高度（内容在内部滚动）
 
     /// 展开卡片宽度：刘海宽的 2 倍（比例锚点），下限 360，上限屏幕宽 − 24
     func cardWidth(screenWidth: CGFloat) -> CGFloat {
@@ -267,6 +274,13 @@ final class NotchModel: ObservableObject {
     var onNewNote: (() -> Void)?
     var onOpenWall: (() -> Void)?
     var onOpenNote: ((Note) -> Void)?
+    @Published var detailNote: Note? = nil
+    var onCloseDetail: (() -> Void)?
+    var onCopyNote: ((Note) -> NoteCopy.Result)?
+    var onDeleteNote: ((Note) -> Void)?
+    var onTogglePinNote: ((Note) -> Void)?
+    var onToggleCheck: ((Note, Int) -> Void)?
+    var onOpenInWall: ((Note) -> Void)?
 }
 
 final class NotchPanel: NSPanel {
@@ -333,7 +347,44 @@ final class NotchController {
             self?.collapseNow()
             AppDelegate.bringWallToFront()
         }
-        model.onOpenNote = { [weak self] _ in
+        model.onOpenNote = { [weak self] note in
+            guard let self else { return }
+            // 用 store 里的最新副本（列表只是快照，可能已旧）
+            self.model.detailNote = self.store?.notes.first(where: { $0.id == note.id }) ?? note
+            self.apply(true)
+        }
+        model.onCloseDetail = { [weak self] in
+            guard let self else { return }
+            self.model.detailNote = nil
+            self.apply(true)
+        }
+        model.onCopyNote = { note in NoteCopy.copy(note) }
+        model.onDeleteNote = { [weak self] note in
+            guard let self else { return }
+            self.store?.delete(note.id)
+            if self.model.detailNote?.id == note.id { self.model.detailNote = nil }
+            self.refreshNotes()
+            if self.isExpanded { self.apply(true) }
+        }
+        model.onTogglePinNote = { [weak self] note in
+            self?.store?.togglePin(note.id)
+            self?.refreshNotes()
+        }
+        model.onToggleCheck = { [weak self] note, itemID in
+            guard let self else { return }
+            self.store?.toggleCheck(noteID: note.id, itemID: itemID)
+            // 详情页拿的是副本：勾选后把最新状态同步回去（高度不变，不必重排 frame）
+            if let fresh = self.store?.notes.first(where: { $0.id == note.id }),
+               self.model.detailNote != fresh {
+                self.model.detailNote = fresh
+            }
+            self.refreshNotes()
+        }
+        model.onOpenInWall = { [weak self] note in
+            // 与菜单栏「设置…」同一套旗子 + 通知机制：窗口在就直接弹，
+            // 窗口是刚重建的就靠 WallView 的 onAppear 消费旗子
+            AppContext.shared.pendingDetailNoteID = note.id
+            NotificationCenter.default.post(name: .noteWallOpenDetail, object: nil)
             self?.collapseNow()
             AppDelegate.bringWallToFront()
         }
@@ -383,7 +434,10 @@ final class NotchController {
     private func frame(expanded: Bool) -> NSRect {
         guard let s = screen, let g = geometry else { return .zero }
         let w = expanded ? g.cardWidth(screenWidth: s.frame.width) : g.collapsedWidth
-        let h = expanded ? g.expandedHeight(noteCount: model.notes.count) : g.height
+        let h: CGFloat
+        if !expanded { h = g.height }
+        else if model.detailNote != nil { h = NotchGeometry.detailHeight }
+        else { h = g.expandedHeight(noteCount: model.notes.count) }
         return NSRect(x: g.centerX - w / 2,
                       y: s.frame.maxY - h,
                       width: w, height: h)
@@ -391,6 +445,7 @@ final class NotchController {
 
     private func apply(_ expanded: Bool) {
         isExpanded = expanded
+        if !expanded { model.detailNote = nil }
         model.isExpanded = expanded
         guard let p = panel else { return }
         NSAnimationContext.runAnimationGroup { ctx in
@@ -404,7 +459,7 @@ final class NotchController {
 
 // MARK: - 界面
 
-struct NotchContentView: View {
+struct NotchListView: View {
     @ObservedObject var model: NotchModel
 
     var body: some View {
@@ -423,9 +478,10 @@ struct NotchContentView: View {
             if !model.notes.isEmpty {
                 VStack(spacing: 2) {
                     ForEach(model.notes) { note in
-                        NotchNoteRow(note: note) { model.onOpenNote?(note) }
+                        NotchNoteRow(note: note, model: model)
                     }
                 }
+                .frame(maxWidth: .infinity)
                 .padding(.horizontal, 10)
                 .padding(.top, 8)
                 .padding(.bottom, 10)
@@ -477,6 +533,30 @@ struct NotchContentView: View {
     }
 }
 
+// MARK: - 刘海内容（列表 / 详情切换）
+
+/// 托管与像素自检的入口保持这个名字：展开时按 model.detailNote 在列表与详情间切换，
+/// 收起时两边都不画（零像素不变——背景只在展开时出现）。
+struct NotchContentView: View {
+    @ObservedObject var model: NotchModel
+
+    var body: some View {
+        Group {
+            if let detail = model.detailNote {
+                NotchNoteDetailView(note: detail, model: model)
+            } else {
+                NotchListView(model: model)
+            }
+        }
+        .background {
+            NotchCardShape()
+                .fill(Color.black)
+                .opacity(model.isExpanded ? 1 : 0)
+        }
+        .allowsHitTesting(model.isExpanded)
+    }
+}
+
 // MARK: - 垂落卡片轮廓
 
 /// 顶部两肩用贴合圆角（控制点压在角上、曲线向内收），像从屏幕顶边垂下来；
@@ -506,41 +586,77 @@ struct NotchCardShape: Shape {
 
 struct NotchNoteRow: View {
     let note: Note
-    var action: () -> Void
+    var model: NotchModel
     @State private var hovering = false
+    @State private var copied = false
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 9) {
-                thumb
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.92))
-                        .lineLimit(1)
-                    HStack(spacing: 5) {
-                        if note.isPinned {
-                            Image(systemName: "pin.fill")
-                                .font(.system(size: 8.5))
-                        }
-                        Text(subtitle)
-                            .lineLimit(1)
+        HStack(spacing: 9) {
+            thumb
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.92))
+                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    if note.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 8.5))
                     }
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Color.white.opacity(0.45))
+                    Text(subtitle)
+                        .lineLimit(1)
                 }
-                Spacer(minLength: 0)
+                .font(.system(size: 10.5))
+                .foregroundStyle(Color.white.opacity(0.45))
             }
-            .padding(.horizontal, 8)
-            .frame(height: NotchGeometry.rowH)
-            .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(Color.white.opacity(hovering ? 0.13 : 0.05))
-            )
-            .contentShape(Rectangle())
+            Spacer(minLength: 4)
+            // 悬停才浮现的操作：复制 + 删除。编辑不设按钮——点行本身就是打开这条。
+            if hovering {
+                HStack(spacing: 2) {
+                    iconButton(copied ? "checkmark" : "doc.on.doc", help: "复制便签") { copyTapped() }
+                    iconButton("trash", help: "删除便签") { model.onDeleteNote?(note) }
+                }
+            }
         }
-        .buttonStyle(.plain).handCursor()
+        .padding(.horizontal, 8)
+        .frame(height: NotchGeometry.rowH)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color.white.opacity(hovering ? 0.13 : 0.05))
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { model.onOpenNote?(note) }
         .onHover { hovering = $0 }
+        .handCursor()
+        .contextMenu {
+            Button("复制便签") { _ = model.onCopyNote?(note) }
+            Button(note.isPinned ? "取消置顶" : "置顶") { model.onTogglePinNote?(note) }
+            Divider()
+            Button("删除便签", role: .destructive) { model.onDeleteNote?(note) }
+        }
+    }
+
+    private func iconButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.88))
+                .frame(width: 24, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.white.opacity(0.10))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    private func copyTapped() {
+        guard let r = model.onCopyNote?(note), r != .nothing else { return }
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
     }
 
     /// 左侧 24pt 方片：有图用缩略图，没图用纸色（靠颜色认便签是产品的心智）
@@ -558,13 +674,18 @@ struct NotchNoteRow: View {
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
-    /// 一行预览：正文第一非空行（清单剥掉勾选标记）→ 图片 / 空白兜底
+    /// 一行预览：正文第一非空行（清单剥掉项目符号与勾选框）→ 图片 / 空白兜底
     private var title: String {
         for line in note.text.components(separatedBy: "\n") {
             var t = line.trimmingCharacters(in: .whitespaces)
             if t.isEmpty { continue }
-            for mark in ["✓ ", "☑ ", "☐ ", "[x] ", "[ ] ", "· "] where t.hasPrefix(mark) {
+            for bullet in ["- ", "* ", "+ "] where t.hasPrefix(bullet) {
+                t = String(t.dropFirst(bullet.count)).trimmingCharacters(in: .whitespaces)
+                break
+            }
+            for mark in ["[ ] ", "[x] ", "[X] ", "[✓] ", "✓ ", "☑ ", "☐ ", "· "] where t.hasPrefix(mark) {
                 t = String(t.dropFirst(mark.count)).trimmingCharacters(in: .whitespaces)
+                break
             }
             if !t.isEmpty { return t }
         }
@@ -578,6 +699,143 @@ struct NotchNoteRow: View {
             let p = note.checklistProgress
             parts.append("清单 \(p.done)/\(p.total)")
         }
+        if !note.tag.isEmpty { parts.append(note.tag) }
+        parts.append(Self.timeFormatter.localizedString(for: note.updatedAt, relativeTo: Date()))
+        return parts.joined(separator: " · ")
+    }
+
+    private static let timeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
+}
+
+// MARK: - 刘海内详情页
+
+/// 点列表行后在面板内打开的单条详情：看全 + 勾清单 + 复制是这个场景的高频动作；
+/// 深度编辑（换纸色 / 改标签 / 贴图）不在这里做，经「在便签墙中打开」跳墙内详情页。
+struct NotchNoteDetailView: View {
+    let note: Note
+    var model: NotchModel
+    @State private var copied = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Button { model.onCloseDetail?() } label: {
+                    HStack(spacing: 2) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("返回")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundStyle(Color.white.opacity(0.85))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(Color.white.opacity(0.10))
+                    )
+                }
+                .buttonStyle(.plain).handCursor()
+                Spacer(minLength: 0)
+                Circle().fill(note.paper.paper).frame(width: 9, height: 9)
+                Text(meta)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.white.opacity(0.45))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 38)
+
+            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 0.5)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let img = note.image, let ns = ImageStore.load(img.fileName, thumb: false) {
+                        Image(nsImage: ns)
+                            .resizable()
+                            .scaledToFit()
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    if note.isChecklist {
+                        ForEach(Checklist.parse(note.text)) { item in
+                            checkRow(item)
+                        }
+                    } else if !note.text.isEmpty {
+                        Text(note.text)
+                            .font(.system(size: 13.5))
+                            .foregroundStyle(Color.white.opacity(0.92))
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: .infinity)
+
+            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 0.5)
+
+            HStack(spacing: 8) {
+                actionButton(copied ? "checkmark" : "doc.on.doc",
+                             label: copied ? "已复制" : "复制") { copyTapped() }
+                actionButton("rectangle.stack", label: "在便签墙打开") { model.onOpenInWall?(note) }
+                Spacer(minLength: 0)
+                actionButton("trash", label: "删除") { model.onDeleteNote?(note) }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 42)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func checkRow(_ item: Checklist.Item) -> some View {
+        Button { model.onToggleCheck?(note, item.id) } label: {
+            HStack(spacing: 8) {
+                Image(systemName: item.done ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 15))
+                    .foregroundStyle(item.done ? Color.green : Color.white.opacity(0.4))
+                Text(item.text)
+                    .font(.system(size: 13.5))
+                    .foregroundStyle(Color.white.opacity(item.done ? 0.45 : 0.92))
+                    .strikethrough(item.done, color: Color.white.opacity(0.4))
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).handCursor()
+    }
+
+    private func actionButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: symbol)
+                    .font(.system(size: 11.5, weight: .medium))
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .foregroundStyle(Color.white.opacity(0.9))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.white.opacity(0.10))
+            )
+        }
+        .buttonStyle(.plain).handCursor()
+    }
+
+    private func copyTapped() {
+        guard let r = model.onCopyNote?(note), r != .nothing else { return }
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { copied = false }
+    }
+
+    private var meta: String {
+        var parts: [String] = []
+        if note.isPinned { parts.append("已置顶") }
         if !note.tag.isEmpty { parts.append(note.tag) }
         parts.append(Self.timeFormatter.localizedString(for: note.updatedAt, relativeTo: Date()))
         return parts.joined(separator: " · ")
