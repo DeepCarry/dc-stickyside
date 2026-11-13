@@ -7,6 +7,7 @@ name: Build macOS Installer
 on:
   push:
     branches: [main]
+    paths-ignore: ["shots/**"]
   workflow_dispatch:
 
 permissions:
@@ -65,3 +66,25 @@ jobs:
             StickySide-*.zip
           retention-days: 30
           if-no-files-found: error
+
+  snapshots:
+    runs-on: macos-15
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build (debug, for snapshots)
+        run: swift build
+      - name: Render UI snapshots
+        run: bash tools/snapshots.sh shots/ci
+      - name: Commit snapshots back
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add shots/ci
+          if git diff --cached --quiet; then
+            echo "界面快照无变化，跳过提交"
+          else
+            git commit -m "ci: 更新界面快照 [skip ci]"
+            git push
+          fi
