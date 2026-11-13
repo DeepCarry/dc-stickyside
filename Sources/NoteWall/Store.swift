@@ -121,7 +121,7 @@ final class AppStore: ObservableObject {
     /// 主区视图：网格 / 列表。重启保持。
     @Published var viewMode: ViewMode = .grid { didSet { scheduleSave() } }
     /// 整齐模式：关掉卡片的旋转、胶带与折角。设置里可开。
-    @Published var neatMode: Bool = false { didSet { scheduleSave() } }
+    @Published var neatMode: Bool = true { didSet { scheduleSave() } }
     /// 侧栏智能视图（收藏 / 最近 / 桌面便签）。会话态，不存盘——
     /// 和 selectedWallID / searchText 一样，重启回到全部。
     @Published var smartView: SmartView? = nil
@@ -235,7 +235,7 @@ final class AppStore: ObservableObject {
             edgeIntroduced = a.edgeIntroduced ?? false
             sidebarMode = a.sidebarMode ?? .expanded
             viewMode = a.viewMode ?? .grid
-            neatMode = a.neatMode ?? false
+            neatMode = a.neatMode ?? true
             if let f = a.captureFrame, f.count == 4 {
                 captureFrame = CGRect(x: f[0], y: f[1], width: f[2], height: f[3])
             }

@@ -764,6 +764,7 @@ struct WallContent: View {
             Spacer(minLength: 6)
             sortMenu
             viewToggle
+            modeToggle
         }
         .padding(.top, 14)
     }
@@ -828,6 +829,43 @@ struct WallContent: View {
                     )
             }
             .buttonStyle(.plain).handCursor().help("列表视图")
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(T.inset)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(T.line, lineWidth: 0.8)
+                )
+        )
+    }
+
+    /// 整齐 / 旋转两种墙面。切模式不丢筛选与排序，只换倾斜与间距。
+    private var modeToggle: some View {
+        HStack(spacing: 0) {
+            Button { store.neatMode = true } label: {
+                Image(systemName: "rectangle.on.rectangle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(store.neatMode ? T.text : T.textDim)
+                    .frame(width: 30, height: 26)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(store.neatMode ? T.chipActive : Color.clear)
+                    )
+            }
+            .buttonStyle(.plain).handCursor().help("整齐显示")
+            Button { store.neatMode = false } label: {
+                Image(systemName: "rectangle.on.rectangle.angled")
+                    .font(.system(size: 12))
+                    .foregroundStyle(!store.neatMode ? T.text : T.textDim)
+                    .frame(width: 30, height: 26)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(!store.neatMode ? T.chipActive : Color.clear)
+                    )
+            }
+            .buttonStyle(.plain).handCursor().help("旋转显示")
         }
         .padding(2)
         .background(
@@ -931,7 +969,8 @@ struct WallContent: View {
         } else {
             // 默认 3 列：两列时卡片被拉到 ~450pt 宽，太大、不像一面便签墙
             MasonryLayout(preferredColumns: 3, minColumnWidth: 260,
-                          wideColumnWidth: 320, maxColumns: 4, gap: 16) {
+                          wideColumnWidth: 320, maxColumns: 4,
+                          gap: store.neatMode ? 20 : 8) {
                 ForEach(notes) { note in
                     card(note)
                 }
