@@ -18,6 +18,11 @@ final class AppContext {
     var pendingOpenSettings = false
     /// 刘海里点「在便签墙中打开」时要打开的便签 id；消费方式同 pendingOpenSettings。
     var pendingDetailNoteID: UUID? = nil
+    /// 捕获面板 ⌘E 带过来的草稿：正文 / 标签 / 纸色。由 `WallView` 消费
+    /// （onAppear 兜底 + noteWallOpenDraft 通知快路），消费完立刻清掉。
+    var pendingDraftText: String? = nil
+    var pendingDraftTag: String? = nil
+    var pendingDraftPaper: Paper? = nil
     private init() {}
 }
 
@@ -26,6 +31,8 @@ extension Notification.Name {
     static let noteWallOpenSettings = Notification.Name("NoteWall.openSettings")
     /// 刘海「在便签墙中打开」→ 墙窗口弹该便签的详情 sheet
     static let noteWallOpenDetail = Notification.Name("NoteWall.openDetail")
+    /// 捕获面板 ⌘E → 墙窗口把草稿送进英雄纸
+    static let noteWallOpenDraft = Notification.Name("NoteWall.openDraft")
 }
 
 struct NoteWallApp: App {
@@ -49,7 +56,7 @@ struct NoteWallApp: App {
                             store.sidebarMode = store.sidebarMode.next
                         } label: {
                             Image(systemName: "sidebar.left")
-                                .font(.system(size: 13))
+                                .font(.icon(13))
                         }
                         .help("折叠侧边栏 (⌘B)")
                         .keyboardShortcut("b", modifiers: .command)
@@ -61,6 +68,20 @@ struct NoteWallApp: App {
         .defaultSize(width: 1180, height: 820)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            CommandMenu("字体") {
+                // 只留一个「放大字体」入口（⌘+）：菜单里出现两次是 bug。
+                // macOS 上 ⌘= 同样触发 ⌘+ 的菜单项（AppKit 把 +/= 视作同一快捷键），
+                // 所以别名按钮不需要；若真机上 ⌘= 无效，再把双入口加回来。
+                Button("放大字体") { store.bumpFontScale(by: 0.05) }
+                    .keyboardShortcut("+", modifiers: .command)
+                Button("缩小字体") { store.bumpFontScale(by: -0.05) }
+                    .keyboardShortcut("-", modifiers: .command)
+                Divider()
+                Button("恢复标准大小") { store.fontScale = 1.0 }
+                    .keyboardShortcut("0", modifiers: .command)
+                Text("当前 \(Int((store.fontScale * 100).rounded()))%")
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }
@@ -123,11 +144,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         HotKeyCenter.shared.install()
         // 启动时按存档里的配置注册；被别的 App 占用（⌥ Space 常被启动器类工具占了）
         // 不能静默吞掉——用户唯一的感知就是「按了没反应」，必须明说并指路
-        if let failed = HotKeyCenter.shared.apply(store.hotkeys, strict: false) {
-            let combo = store.hotkeys.combo(for: failed)
-            NSLog("NoteWall: \(failed.title) 的快捷键 \(combo.display) 注册失败（被其他应用占用）")
-            store.hotkeyMessage = "\(failed.title)的 \(combo.display) 被其他应用占用，这个快捷键暂时不可用，换一组就好"
-            ToastCenter.shared.show("「\(failed.title)」的快捷键被其他应用占用，可在设置里更换",
+        // 两位都可能被占：逐位报。ToastCenter 一次只显示一条，两位都失败时
+        // 合成一条 Toast 念出两个名字，不会被后一条顶掉前一条（P0-7）。
+        HotKeyCenter.shared.apply(store.hotkeys, strict: false)
+        let failedSlots = HotKeyCenter.shared.failedSlots
+        if !failedSlots.isEmpty {
+            let names = failedSlots.map { "「\($0.title)」" }.joined()
+            let details = failedSlots.map { slot in
+                "「\(slot.title)」的 \(store.hotkeys.combo(for: slot).display)"
+            }.joined(separator: "、")
+            NSLog("NoteWall: 快捷键注册失败（被其他应用占用）：\(details)")
+            store.hotkeyMessage = "\(details) 被其他应用占用，这个快捷键暂时不可用，换一组就好"
+            ToastCenter.shared.show("\(names) 的快捷键被其他应用占用，可在设置里更换",
                                     seconds: 6)
         }
 
@@ -166,6 +194,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 本次会话解过锁的便签重新封上：明文不留在磁盘上过夜。
         // 注意：被系统强杀 / 崩溃时不会执行，那种情况下明文会留到下次解锁。
         AppContext.shared.store.relockSessionNotes()
+        // 350ms 防抖里的设置改动（外观/字号/快捷键等）也落盘，别丢在退出时（P2-12）。
+        AppContext.shared.store.saveNow()
     }
 
     /// 菜单栏常驻入口：既是无刘海设备的降级方案，也是快捷键没记住时的兜底

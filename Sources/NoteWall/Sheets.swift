@@ -80,7 +80,7 @@ struct NoteDetailSheet: View {
                      : (store.authenticator.kind.available
                         ? "内容以密文保存在本机，解锁需要 \(store.authenticator.kind.title)。"
                         : "这台 Mac 上无法验证身份（没有 Touch ID，也没设登录密码），暂时打不开。"))
-                    .font(.ui(11.5))
+                    .font(.ui(T.auxSize))
                     .foregroundStyle(draft.paper.ink.opacity(0.45))
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
@@ -93,7 +93,7 @@ struct NoteDetailSheet: View {
 
             if let at = draft.lockedAt {
                 Text("锁定于 \(TimeLabel.card(at))")
-                    .font(.ui(10.5))
+                    .font(.ui(T.captionSize))
                     .foregroundStyle(draft.paper.ink.opacity(0.32))
             }
         }
@@ -110,18 +110,22 @@ struct NoteDetailSheet: View {
     }
 
     private func lockNow() {
-        _ = store.lock(draft.id)
-        onClose()
+        // 先保存再上锁：save() 会 onClose()，锁在关掉之后做；id 先取出来，
+        // 不然 onClose 之后再读 draft 不稳（P1-1）。
+        let id = draft.id
+        save()
+        _ = store.lock(id)
     }
 
     private var topBar: some View {
         HStack(spacing: 8) {
             ForEach(["想法", "灵感", "待办", "资料", "参考"], id: \.self) { tag in
                 Button {
-                    box.note.tag = (box.note.tag == tag) ? "" : tag
+                    // 与英雄纸一致：永远选中一个，点已选中的不清空（P2-2）。
+                    box.note.tag = tag
                 } label: {
                     Text(tag)
-                        .font(.ui(11.5, .medium))
+                        .font(.ui(T.auxSize, .medium))
                         .foregroundStyle(draft.paper.ink.opacity(draft.tag == tag ? 0.9 : 0.42))
                         .frame(height: 24)
                         .padding(.horizontal, 9)
@@ -134,7 +138,7 @@ struct NoteDetailSheet: View {
             Spacer(minLength: 8)
             if draft.isLocked {
                 Label("已锁定", systemImage: "lock.fill")
-                    .font(.ui(10.5))
+                    .font(.ui(T.captionSize))
                     .foregroundStyle(draft.paper.ink.opacity(0.5))
             }
         }
@@ -185,17 +189,17 @@ struct NoteDetailSheet: View {
             Divider().overlay(draft.paper.ink.opacity(0.10))
             HStack(spacing: 8) {
                 Text("添加于 \(TimeLabel.card(draft.createdAt))")
-                    .font(.ui(10.5))
+                    .font(.ui(T.captionSize))
                     .foregroundStyle(draft.paper.ink.opacity(0.42))
                 if draft.updatedAt.timeIntervalSince(draft.createdAt) > 60 {
                     Text("· 编辑于 \(TimeLabel.card(draft.updatedAt))")
-                        .font(.ui(10.5))
+                        .font(.ui(T.captionSize))
                         .foregroundStyle(draft.paper.ink.opacity(0.32))
                 }
                 Spacer()
                 Button { lockNow() } label: {
                     Image(systemName: "lock")
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.icon(10.5, .medium))
                         .foregroundStyle(draft.paper.ink.opacity(0.5))
                         .frame(width: 28, height: 28)
                         .background(Circle().fill(draft.paper.ink.opacity(0.07)))
@@ -239,7 +243,7 @@ struct NoteDetailSheet: View {
     private var closeButton: some View {
         Button { save() } label: {
             Image(systemName: "xmark")
-                .font(.system(size: 9, weight: .bold))
+                .font(.icon(9, .bold))
                 .foregroundStyle(draft.paper.ink.opacity(0.45))
                 .frame(width: 22, height: 22)
                 .background(Circle().fill(draft.paper.ink.opacity(0.06)))
@@ -262,13 +266,20 @@ struct NoteDetailSheet: View {
 struct TrashSheet: View {
     @EnvironmentObject private var store: AppStore
     var onClose: () -> Void
+    /// 同一个视图上叠两个 `.alert` 只有最后一个会响应（WallView 的老教训），
+    /// 所以清空 / 彻底删除共用一个确认态，标题与按钮按 case 切换。
+    private enum TrashConfirm: Equatable {
+        case empty
+        case delete(UUID)
+    }
+    @State private var confirm: TrashConfirm? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("回收站").font(.ui(16, .semibold)).foregroundStyle(T.text)
                 Spacer()
-                Button("清空") { store.emptyTrash() }
+                Button("清空") { confirm = .empty }
                     .buttonStyle(GhostButtonStyle(height: 26, hPad: 10)).handCursor()
                     .disabled(store.trashedNotes.isEmpty)
                 Button("关闭") { onClose() }
@@ -278,7 +289,7 @@ struct TrashSheet: View {
 
             if store.trashedNotes.isEmpty {
                 Text("回收站是空的。删掉的便签会在这里保留 30 天。")
-                    .font(.ui(12.5)).foregroundStyle(T.textDim)
+                    .font(.ui(T.auxSize)).foregroundStyle(T.textDim)
                     .padding(.vertical, 40)
             } else {
                 ScrollView {
@@ -291,16 +302,16 @@ struct TrashSheet: View {
                                 if note.isLocked {
                                     // 锁定便签在回收站里也不露出内容（PRD §2.8）
                                     Label("已锁定的便签", systemImage: "lock.fill")
-                                        .font(.ui(12.5)).foregroundStyle(T.textDim)
+                                        .font(.ui(T.auxSize)).foregroundStyle(T.textDim)
                                 } else {
                                     Text(note.text.replacingOccurrences(of: "\n", with: " ").prefix(40))
-                                        .font(.ui(12.5)).foregroundStyle(T.text)
+                                        .font(.ui(T.auxSize)).foregroundStyle(T.text)
                                         .lineLimit(1)
                                 }
                                 Spacer()
                                 Button("恢复") { store.restore(note.id) }
                                     .buttonStyle(GhostButtonStyle(height: 24, hPad: 9)).handCursor()
-                                Button("彻底删除") { store.deleteForever(note.id) }
+                                Button("彻底删除") { confirm = .delete(note.id) }
                                     .buttonStyle(GhostButtonStyle(height: 24, hPad: 9)).handCursor()
                             }
                             .padding(10)
@@ -313,6 +324,23 @@ struct TrashSheet: View {
         .padding(22)
         .frame(width: 520, height: 420)
         .background(T.panel)
+        .alert(confirm == .empty ? "清空回收站？" : "彻底删除这张便签？", isPresented: Binding(
+            get: { confirm != nil },
+            set: { if !$0 { confirm = nil } }
+        )) {
+            if case .empty = confirm {
+                Button("清空", role: .destructive) { store.emptyTrash(); confirm = nil }
+            } else if case .delete(let id) = confirm {
+                Button("彻底删除", role: .destructive) { store.deleteForever(id); confirm = nil }
+            }
+            Button("取消", role: .cancel) { confirm = nil }
+        } message: {
+            if case .empty = confirm {
+                Text("回收站里的便签会被彻底删除，无法撤销。")
+            } else {
+                Text("删除后无法恢复，也不能用 ⌘Z 撤销。")
+            }
+        }
     }
 }
 
@@ -325,6 +353,7 @@ final class SettingsBox: ObservableObject {
 struct SettingsSheet: View {
     @EnvironmentObject private var store: AppStore
     @StateObject private var box = SettingsBox()
+    @State private var confirmEmptyTrash = false
     var onClose: () -> Void
 
     private var lockedCount: Int { store.notes.filter(\.isLocked).count }
@@ -348,10 +377,9 @@ struct SettingsSheet: View {
                 } else {
                     // 只把滚动条改成 overlay：静止时不占位，滚动/输入时浮出来。
                     // 直接关掉指示器会让「下面还有内容」完全没提示。
-                    // 关掉滚动指示器：SwiftUI 的 ScrollView 即使换成 overlay 滚动条，
-                    // 仍会在布局层预留约 16pt，右侧就比左侧宽出一条，内容看着不居中。
-                    // 设置页靠触控板/滚轮滚动，指示器本来也只在滚动时才该出现。
-                    ScrollView(.vertical, showsIndicators: false) { settingsBody }
+                    // 0.3.5：指示器重新打开——6 组内容在 640pt 固定高度里会溢出，
+                    // 没有指示器用户不知道下面还有内容（P2-7）。
+                    ScrollView(.vertical, showsIndicators: true) { settingsBody }
                 }
             }
         }
@@ -389,7 +417,29 @@ struct SettingsSheet: View {
                                 store.appearance = mode
                             }
                             Text(appearanceHint)
-                                .font(.ui(10.5)).foregroundStyle(T.textFaint)
+                                .font(.ui(T.captionSize)).foregroundStyle(T.textFaint)
+                                .fixedSize(horizontal: false, vertical: true)
+                            HStack {
+                                Text("字体大小").font(.ui(T.auxSize))
+                                Spacer()
+                                Picker("字体大小", selection: Binding(
+                                    get: { store.fontPreset },
+                                    set: { store.fontScale = $0.scale }
+                                )) {
+                                    ForEach(FontSizePreset.allCases) { preset in
+                                        Text(preset.title).tag(preset)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                .labelsHidden()
+                                .frame(width: 150)
+                                Text("\(Int((store.fontScale * 100).rounded()))%")
+                                    .font(.ui(T.auxSize, .medium))
+                                    .foregroundStyle(T.textDim)
+                                    .frame(width: 44, alignment: .trailing)
+                            }
+                            Text("⌘+ / ⌘- 可以 5% 一档微调，⌘0 恢复标准。")
+                                .font(.ui(T.captionSize)).foregroundStyle(T.textFaint)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         .padding(.horizontal, 14)
@@ -420,15 +470,6 @@ struct SettingsSheet: View {
                                     }
                             }
                         }
-                        row("菜单栏图标", subtitle: "无刘海设备上作为主要入口", showDivider: false) {
-                            if RenderFlags.snapshot {
-                                FakeSwitch(on: true)
-                            } else {
-                                Toggle("", isOn: .constant(true))
-                                    .toggleStyle(.switch).labelsHidden().handCursor()
-                                    .disabled(true)
-                            }
-                        }
                     }
 
                     group("快捷键") {
@@ -444,7 +485,7 @@ struct SettingsSheet: View {
                         }
                         if let msg = store.hotkeyMessage {
                             Label(msg, systemImage: "exclamationmark.triangle.fill")
-                                .font(.ui(11))
+                                .font(.ui(T.metaSize))
                                 .foregroundStyle(T.accent)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -509,7 +550,7 @@ struct SettingsSheet: View {
                             row("主密钥已更换", subtitle: "与存档里的密文不匹配，锁定的便签暂时无法解密",
                                 showDivider: false) {
                                 Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.system(size: 11)).foregroundStyle(T.accent)
+                                    .font(.icon(11)).foregroundStyle(T.accent)
                             }
                         }
                         hint("锁定的便签不进搜索结果、不显示缩略图，回收站里只显示「已锁定的便签」。主密钥是本机一个 0600 权限的独立文件，不写进存档、不进 Time Machine 备份；退出应用时本次解锁过的便签会自动重新锁上。")
@@ -528,9 +569,15 @@ struct SettingsSheet: View {
                                 .disabled(store.captureFrame == nil)
                         }
                         row("回收站", subtitle: "\(store.trashedNotes.count) 张便签待清理", showDivider: false) {
-                            Button("清空") { store.emptyTrash() }
+                            Button("清空") { confirmEmptyTrash = true }
                                 .buttonStyle(GhostButtonStyle(height: 24, hPad: 9)).handCursor()
                                 .disabled(store.trashedNotes.isEmpty)
+                                .alert("清空回收站？", isPresented: $confirmEmptyTrash) {
+                                    Button("清空", role: .destructive) { store.emptyTrash() }
+                                    Button("取消", role: .cancel) {}
+                                } message: {
+                                    Text("回收站里的便签会被彻底删除，无法撤销。")
+                                }
                         }
                     }
                 }
@@ -596,10 +643,10 @@ struct SettingsSheet: View {
     private func menuChrome(_ text: String) -> some View {
         HStack(spacing: 5) {
             Text(text)
-                .font(.ui(11.5, .medium))
+                .font(.ui(T.auxSize, .medium))
                 .foregroundStyle(T.text)
             Image(systemName: "chevron.down")
-                .font(.system(size: 7.5, weight: .bold))
+                .font(.icon(7.5, .bold))
                 .foregroundStyle(T.textFaint)
         }
         .padding(.horizontal, 10)
@@ -639,7 +686,7 @@ struct SettingsSheet: View {
     private func group(_ title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.ui(11.5, .semibold))
+                .font(.ui(T.auxSize, .semibold))
                 .kerning(0.2)
                 .foregroundStyle(T.textFaint)
                 .padding(.leading, 2)
@@ -661,9 +708,9 @@ struct SettingsSheet: View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 14) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.ui(12.5)).foregroundStyle(T.text)
+                    Text(title).font(.ui(T.auxSize)).foregroundStyle(T.text)
                     Text(subtitle)
-                        .font(.ui(10.5))
+                        .font(.ui(T.captionSize))
                         .foregroundStyle(T.textFaint)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -688,7 +735,7 @@ struct SettingsSheet: View {
     /// 只靠右对齐和颜色跟左侧标题拉开层次——免得它和下拉长得像。
     private func valueText(_ s: String, accent: Bool = false) -> some View {
         Text(s)
-            .font(.ui(11.5, .medium))
+            .font(.ui(T.auxSize, .medium))
             .foregroundStyle(accent ? T.accent : T.textDim)
             .lineLimit(1)
     }
@@ -702,7 +749,7 @@ struct SettingsSheet: View {
                 value.wrappedValue = max(range.lowerBound, value.wrappedValue - 1)
             }
             Text("\(value.wrappedValue) \(unit)")
-                .font(.ui(11.5, .medium))
+                .font(.ui(T.auxSize, .medium))
                 .foregroundStyle(T.text)
                 .monospacedDigit()
                 .frame(minWidth: 42)
@@ -725,7 +772,7 @@ struct SettingsSheet: View {
                            action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 9, weight: .bold))
+                .font(.icon(9, .bold))
                 .foregroundStyle(enabled ? T.text : T.textFaint)
                 .frame(width: 26, height: 26)
                 .contentShape(Rectangle())
@@ -737,7 +784,7 @@ struct SettingsSheet: View {
     /// 分组底部的说明文字：跟行的左内边距对齐
     private func hint(_ s: String, top: CGFloat = 2) -> some View {
         Text(s)
-            .font(.ui(10.5))
+            .font(.ui(T.captionSize))
             .foregroundStyle(T.textFaint)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -748,7 +795,7 @@ struct SettingsSheet: View {
 
     private func keyCap(_ s: String) -> some View {
         Text(s)
-            .font(.ui(10.5, .medium))
+            .font(.ui(T.captionSize, .medium))
             .foregroundStyle(T.textDim)
             .padding(.horizontal, 8).frame(height: 22)
             .background(RoundedRectangle(cornerRadius: 5).fill(T.inset))
@@ -838,7 +885,7 @@ struct HotkeyRecorder: View {
             if box.isRecording { box.stop() } else { box.start(onCommit: onCommit) }
         } label: {
             Text(box.isRecording ? (box.live ?? "按下新的组合键") : combo.display)
-                .font(.ui(10.5, .medium))
+                .font(.ui(T.captionSize, .medium))
                 .foregroundStyle(box.isRecording ? T.accent : T.textDim)
                 .frame(minWidth: 100)
                 .frame(height: 24)
