@@ -53,4 +53,20 @@ run edgepull  500x760
 run settings  900x700
 run trash     900x700
 echo "快照完成：成功 ${ok}，失败 ${fail}，输出目录 ${OUT}"
-[ "$ok" -gt 0 ]
+if [ "$ok" -eq 0 ]; then
+  exit 1
+fi
+# 在 GitHub Actions 里顺手把快照提交回仓库（本地运行不触发）。
+# 注意：checkout 出来是游离 HEAD，裸 git push 会失败，必须显式推 HEAD:main。
+if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+  git config user.name "github-actions[bot]"
+  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+  git add "$OUT"
+  if git diff --cached --quiet; then
+    echo "快照与仓库一致，无需提交"
+  else
+    git commit -m "ci: 更新界面快照 [skip ci]"
+    git push origin HEAD:main
+    echo "快照已提交回仓库"
+  fi
+fi
