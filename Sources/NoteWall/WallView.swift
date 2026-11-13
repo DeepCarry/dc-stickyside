@@ -150,6 +150,19 @@ struct WallView: View {
         ui.editing = note
         ui.showDetail = true
     }
+
+    /// 捕获面板 ⌘E 带过来的草稿：写进英雄纸并抢回焦点；消费完立刻清掉。
+    private func consumePendingDraft() {
+        let ctx = AppContext.shared
+        guard let text = ctx.pendingDraftText else { return }
+        ui.draft = text
+        if let tag = ctx.pendingDraftTag { ui.tag = tag }
+        if let paper = ctx.pendingDraftPaper { ui.paper = paper }
+        ctx.pendingDraftText = nil
+        ctx.pendingDraftTag = nil
+        ctx.pendingDraftPaper = nil
+        ui.focusComposerToken += 1
+    }
 }
 
 // MARK: - 可见内容
@@ -1305,19 +1318,6 @@ struct WallContent: View {
     private func pulseComposer() {
         ui.composerPulsing = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { ui.composerPulsing = false }
-    }
-
-    /// 捕获面板 ⌘E 带过来的草稿：写进英雄纸并抢回焦点；消费完立刻清掉。
-    private func consumePendingDraft() {
-        let ctx = AppContext.shared
-        guard let text = ctx.pendingDraftText else { return }
-        ui.draft = text
-        if let tag = ctx.pendingDraftTag { ui.tag = tag }
-        if let paper = ctx.pendingDraftPaper { ui.paper = paper }
-        ctx.pendingDraftText = nil
-        ctx.pendingDraftTag = nil
-        ctx.pendingDraftPaper = nil
-        ui.focusComposerToken += 1
     }
 
     /// 详情页里 ⌘V：把图片贴到当前便签上（已有图就替换，旧文件一并删掉）
