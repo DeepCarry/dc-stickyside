@@ -11,7 +11,7 @@ mkdir -p "$OUT"
 echo "== 环境诊断 =="
 ls -la .build/debug/ 2>/dev/null | head -5
 if [ ! -x "$BIN" ]; then
-  echo "找不到可执行文件 $BIN，请先在仓库根目录运行 swift build"
+  echo "找不到可执行文件 ${BIN}，请先在仓库根目录运行 swift build"
   exit 1
 fi
 echo "== 试渲一张（全量输出） =="
@@ -52,5 +52,5 @@ run edgefan   500x760
 run edgepull  500x760
 run settings  900x700
 run trash     900x700
-echo "快照完成：成功 $ok，失败 $fail，输出目录 $OUT"
+echo "快照完成：成功 ${ok}，失败 ${fail}，输出目录 ${OUT}"
 [ "$ok" -gt 0 ]
