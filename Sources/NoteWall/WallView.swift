@@ -39,8 +39,10 @@ final class WallUI: ObservableObject {
     @Published var searchSelection: Int = 0
     /// 「筛选」气泡开/关。
     @Published var showFilterPopover = false
-    /// 「＋ 新建便签」/ 虚线空位点一下就 +1，英雄纸的输入区抢回焦点。
+    /// 「新建便签」/ 虚线空位点一下就 +1，英雄纸的输入区抢回焦点。
     @Published var focusComposerToken: Int = 0
+    /// 点「新建便签」时英雄纸描边脉冲 0.9s：焦点已在纸上时也有可见反馈。
+    @Published var composerPulsing = false
 
     /// 输入区待附加的图片。⌘V 或拖拽进来，提交时和正文一起落盘。
     @Published var draftImage: NSImage? = nil
@@ -118,6 +120,10 @@ struct WallView: View {
                 if AppContext.shared.pendingDetailNoteID != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { openPendingDetail() }
                 }
+                // 捕获面板 ⌘E 同理：窗口刚重建时靠旗子兜住草稿
+                if AppContext.shared.pendingDraftText != nil {
+                    consumePendingDraft()
+                }
             }
             // 墙窗口已经开着时的快路：菜单栏点「设置…」直接把 sheet 弹出来
             .onReceive(NotificationCenter.default.publisher(for: .noteWallOpenSettings)) { _ in
@@ -128,6 +134,10 @@ struct WallView: View {
             // 墙窗口已经开着时的快路：刘海点「在便签墙中打开」直接弹该便签的详情
             .onReceive(NotificationCenter.default.publisher(for: .noteWallOpenDetail)) { _ in
                 openPendingDetail()
+            }
+            // 墙窗口已经开着时的快路：捕获面板 ⌘E 直接把草稿送进英雄纸
+            .onReceive(NotificationCenter.default.publisher(for: .noteWallOpenDraft)) { _ in
+                consumePendingDraft()
             }
     }
 
@@ -291,6 +301,9 @@ struct WallContent: View {
             // 不拦截的话 TextEditor 会把文件 URL 当普通文本插进来，
             // 用户看到的是一串 /Users/... 路径——这就是「便签不支持图片」的真相。
             if cmd, event.keyCode == 9, let img = ComposerPaste.image() {
+                // 捕获面板开着时，它的 ⌘V 归它自己：主窗口 monitor 先装，
+                // 不让路会把面板里的粘贴吞掉（P0-5）。详情页的粘贴不受影响。
+                if NSApp.keyWindow is CapturePanel { return false }
                 if ui.showDetail, let note = ui.editing {
                     attachImageToNote(note)
                     return true
@@ -314,7 +327,7 @@ struct WallContent: View {
             guard !ui.showDetail, !ui.showSettings, !ui.showTrash, ui.wallDialog == nil else { return false }
 
             // ⌘K / ⌘F：全局搜索浮层。在输入区里按也照样开——浮层接管焦点，草稿不动。
-            if cmd, event.keyCode == 40 || event.keyCode == 3 {
+            if cmd && (event.keyCode == 40 || event.keyCode == 3) {
                 ui.showSearch = true
                 return true
             }
@@ -341,10 +354,12 @@ struct WallContent: View {
             }
             if cmd, shift, event.keyCode == 126 {           // ⌘⇧↑ 最早在前
                 store.sortMode = .oldest
+                ToastCenter.shared.show("已切换为最早在前")
                 return true
             }
             if cmd, shift, event.keyCode == 125 {           // ⌘⇧↓ 最新在前
                 store.sortMode = .newest
+                ToastCenter.shared.show("已切换为最新在前")
                 return true
             }
             return false
@@ -362,7 +377,7 @@ struct WallContent: View {
                     .font(.ui(21, .bold))
                     .foregroundStyle(T.text)
                 Text(currentViewSubtitle)
-                    .font(.ui(12.5))
+                    .font(.ui(T.auxSize))
                     .foregroundStyle(T.textDim)
             }
             Spacer(minLength: 12)
@@ -377,14 +392,14 @@ struct WallContent: View {
         Button { ui.showSearch = true } label: {
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11))
+                    .font(.icon(11))
                     .foregroundStyle(T.textFaint)
                 Text("搜索便签")
-                    .font(.ui(12.5))
+                    .font(.ui(T.auxSize))
                     .foregroundStyle(T.textFaint)
                 Spacer(minLength: 8)
                 Text("⌘F")
-                    .font(.ui(10.5, .medium))
+                    .font(.ui(T.captionSize, .medium))
                     .foregroundStyle(T.textFaint)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
@@ -406,20 +421,29 @@ struct WallContent: View {
         .help("搜索便签 (⌘K / ⌘F)")
     }
 
-    /// 一个动作、三个入口之一：工具栏按钮（一直够得着）。点它把焦点抢回英雄纸。
+    /// 一个动作、三个入口之一：工具栏按钮（一直够得着）。点它把焦点抢回英雄纸，
+    /// 并给英雄纸一个 0.9s 的描边脉冲——焦点已在纸上时也有可见反馈（P1-5）。
+    /// 注意：草稿非空时只聚焦、不清空，绝不丢字；真「新建」语义等 D1 定。
     private var newNoteButton: some View {
-        Button { ui.focusComposerToken += 1 } label: {
-            Text("＋ 新建便签")
-                .font(.ui(13, .bold))
-                .foregroundStyle(Color(hex: 0x3A2E00))
-                .padding(.horizontal, 16)
-                .frame(height: 30)
-                .background(
-                    Capsule()
-                        .fill(Color(hex: 0xFFD84D))
-                        .overlay(Capsule().strokeBorder(Color(hex: 0xE3B800), lineWidth: 1))
-                        .shadow(color: Color(hex: 0xB98C00).opacity(0.3), radius: 3, y: 2)
-                )
+        Button {
+            ui.focusComposerToken += 1
+            pulseComposer()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "plus")
+                    .font(.icon(12, .bold))
+                Text("新建便签")
+                    .font(.ui(13, .bold))
+            }
+            .foregroundStyle(T.ctaFg)
+            .padding(.horizontal, 16)
+            .frame(height: 30)
+            .background(
+                Capsule()
+                    .fill(T.ctaBg)
+                    .overlay(Capsule().strokeBorder(T.ctaEdge, lineWidth: 1))
+                    .shadow(color: T.ctaEdge.opacity(0.3), radius: 3, y: 2)
+            )
         }
         .buttonStyle(.plain)
         .handCursor()
@@ -451,6 +475,7 @@ struct WallContent: View {
             }
         case .rename(let wall):
             store.renameWall(wall.id, to: ui.wallNameDraft)
+            syncWindowTitle()
         case .delete(let wall):
             let count = store.notes.filter { $0.wallID == wall.id && $0.deletedAt == nil }.count
             withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
@@ -521,7 +546,7 @@ struct WallContent: View {
                                 withAnimation(.easeOut(duration: 0.15)) { ui.draftImage = nil }
                             } label: {
                                 Image(systemName: "xmark")
-                                    .font(.system(size: 7.5, weight: .bold))
+                                    .font(.icon(7.5, .bold))
                                     .foregroundStyle(.white)
                                     .frame(width: 16, height: 16)
                                     .background(Circle().fill(Color.black.opacity(0.5)))
@@ -533,10 +558,10 @@ struct WallContent: View {
 
                     VStack(alignment: .leading, spacing: 3) {
                         Text("图片已附加")
-                            .font(.ui(11.5, .medium))
+                            .font(.ui(T.auxSize, .medium))
                             .foregroundStyle(ui.paper.ink.opacity(0.78))
                         Text("会和文字一起添加到墙上")
-                            .font(.ui(10.5))
+                            .font(.ui(T.captionSize))
                             .foregroundStyle(ui.paper.ink.opacity(0.45))
                     }
                     Spacer(minLength: 0)
@@ -551,10 +576,10 @@ struct WallContent: View {
                 Spacer(minLength: 12)
                 // 快捷键提示是纯文字，不做成按钮的样子（v7 的教训：像按钮又不能点）。
                 Text("⌥ Space 随时记 · 自动保存")
-                    .font(.ui(10.5))
+                    .font(.ui(T.captionSize))
                     .foregroundStyle(ui.paper.ink.opacity(0.34))
                 Text("⌘ ↩")
-                    .font(.ui(10.5))
+                    .font(.ui(T.captionSize))
                     .foregroundStyle(ui.paper.ink.opacity(0.34))
                 Button(action: commitDraft) {
                     Text("记下来")
@@ -585,6 +610,12 @@ struct WallContent: View {
                 .strokeBorder(ui.paper.ink.opacity(ui.draftDropTargeted ? 0.30 : 0),
                               lineWidth: 2)
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(T.accent.opacity(ui.composerPulsing ? 0.55 : 0),
+                              lineWidth: 1.5)
+        )
+        .animation(.easeOut(duration: 0.45), value: ui.composerPulsing)
         .onDrop(of: [.fileURL, .image], isTargeted: ui.bind(\.draftDropTargeted)) { providers in
             guard let provider = providers.first else { return false }
             ImageStore.loadImage(from: provider) { img in
@@ -612,7 +643,7 @@ struct WallContent: View {
                             capsule(note)
                         }
                         Text("刚捕捉的便签，点开继续写")
-                            .font(.ui(12))
+                            .font(.ui(T.auxSize))
                             .foregroundStyle(T.textFaint)
                             .padding(.leading, 4)
                     }
@@ -623,35 +654,34 @@ struct WallContent: View {
     }
 
     private func capsule(_ note: Note) -> some View {
-        Button {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(note.paper.paper)
+                .frame(width: 9, height: 9)
+                .overlay(Circle().strokeBorder(T.line, lineWidth: 0.8))
+            Text(capsuleTitle(note))
+                .font(.ui(T.auxSize))
+                .foregroundStyle(T.textDim)
+                .lineLimit(1)
+                .frame(maxWidth: 180)
+            Button { store.dismissRecentCapture(note.id) } label: {
+                Image(systemName: "xmark")
+                    .font(.icon(8, .bold))
+                    .foregroundStyle(T.textFaint)
+            }
+            .buttonStyle(.plain)
+            .handCursor()
+            .help("从这排拿掉（便签还在墙上）")
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 6)
+        .background(Capsule().fill(T.inset))
+        .overlay(Capsule().strokeBorder(T.line, lineWidth: 0.8))
+        .contentShape(Capsule())
+        .onTapGesture {
             ui.editing = note
             ui.showDetail = true
-        } label: {
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(note.paper.paper)
-                    .frame(width: 9, height: 9)
-                    .overlay(Circle().strokeBorder(T.line, lineWidth: 0.8))
-                Text(capsuleTitle(note))
-                    .font(.ui(12))
-                    .foregroundStyle(T.textDim)
-                    .lineLimit(1)
-                    .frame(maxWidth: 180)
-                Button { store.dismissRecentCapture(note.id) } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(T.textFaint)
-                }
-                .buttonStyle(.plain)
-                .handCursor()
-                .help("从这排拿掉（便签还在墙上）")
-            }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 6)
-            .background(Capsule().fill(T.inset))
-            .overlay(Capsule().strokeBorder(T.line, lineWidth: 0.8))
         }
-        .buttonStyle(.plain)
         .handCursor()
     }
 
@@ -668,10 +698,10 @@ struct WallContent: View {
     /// 而「待办」这类标签不选就等于不存在——用户没法把一张便签记成待办。
     private var tagChips: some View {
         HStack(spacing: 2) {
-            ForEach(["灵感", "想法", "待办", "资料"], id: \.self) { t in
+            ForEach(["灵感", "想法", "待办", "资料", "参考"], id: \.self) { t in
                 Button { ui.tag = t } label: {
                     Text(t)
-                        .font(.ui(11))
+                        .font(.ui(T.metaSize))
                         .foregroundStyle(ui.tag == t ? ui.paper.ink.opacity(0.85)
                                                      : ui.paper.ink.opacity(0.40))
                         .padding(.horizontal, 8)
@@ -734,8 +764,8 @@ struct WallContent: View {
             if let tag = store.tagFilter {
                 Button { store.tagFilter = nil } label: {
                     HStack(spacing: 5) {
-                        Text("#\(tag)").font(.ui(12))
-                        Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                        Text("#\(tag)").font(.ui(T.auxSize))
+                        Image(systemName: "xmark").font(.icon(8, .bold))
                     }
                     .foregroundStyle(T.accent)
                     .frame(height: 26)
@@ -752,7 +782,7 @@ struct WallContent: View {
                     withAnimation(.easeOut(duration: 0.16)) { store.clearFilters() }
                 } label: {
                     Text("清除")
-                        .font(.ui(11))
+                        .font(.ui(T.metaSize))
                         .foregroundStyle(T.textFaint)
                         .frame(height: 26)
                         .padding(.horizontal, 4)
@@ -791,11 +821,11 @@ struct WallContent: View {
             ColorFilterPanel().environmentObject(store)
             HStack(alignment: .top, spacing: 24) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("时间").font(.ui(11, .medium)).foregroundStyle(T.textDim)
+                    Text("时间").font(.ui(T.metaSize, .medium)).foregroundStyle(T.textDim)
                     timeFilter
                 }
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("状态").font(.ui(11, .medium)).foregroundStyle(T.textDim)
+                    Text("状态").font(.ui(T.metaSize, .medium)).foregroundStyle(T.textDim)
                     statusFilter
                 }
             }
@@ -809,7 +839,7 @@ struct WallContent: View {
         HStack(spacing: 0) {
             Button { store.viewMode = .grid } label: {
                 Image(systemName: "square.grid.2x2")
-                    .font(.system(size: 12))
+                    .font(.icon(12))
                     .foregroundStyle(store.viewMode == .grid ? T.text : T.textDim)
                     .frame(width: 30, height: 26)
                     .background(
@@ -820,7 +850,7 @@ struct WallContent: View {
             .buttonStyle(.plain).handCursor().help("网格视图")
             Button { store.viewMode = .list } label: {
                 Image(systemName: "list.bullet")
-                    .font(.system(size: 12))
+                    .font(.icon(12))
                     .foregroundStyle(store.viewMode == .list ? T.text : T.textDim)
                     .frame(width: 30, height: 26)
                     .background(
@@ -846,7 +876,7 @@ struct WallContent: View {
         HStack(spacing: 0) {
             Button { store.neatMode = true } label: {
                 Image(systemName: "rectangle.on.rectangle")
-                    .font(.system(size: 12))
+                    .font(.icon(12))
                     .foregroundStyle(store.neatMode ? T.text : T.textDim)
                     .frame(width: 30, height: 26)
                     .background(
@@ -857,7 +887,7 @@ struct WallContent: View {
             .buttonStyle(.plain).handCursor().help("整齐显示")
             Button { store.neatMode = false } label: {
                 Image(systemName: "rectangle.on.rectangle.angled")
-                    .font(.system(size: 12))
+                    .font(.icon(12))
                     .foregroundStyle(!store.neatMode ? T.text : T.textDim)
                     .frame(width: 30, height: 26)
                     .background(
@@ -983,10 +1013,13 @@ struct WallContent: View {
 
     /// 虚线空位：墙上的最后一个格子永远留给「下一个灵感」。点它把焦点抢回英雄纸。
     private var ghostSlot: some View {
-        Button { ui.focusComposerToken += 1 } label: {
+        Button {
+            ui.focusComposerToken += 1
+            pulseComposer()
+        } label: {
             HStack(spacing: 6) {
                 Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.icon(12, .medium))
                 Text("把下一个灵感贴在这里")
                     .font(.ui(13))
             }
@@ -1031,7 +1064,8 @@ struct WallContent: View {
             showCheckCount: store.checkCountVisible,
             neat: store.neatMode,
             compact: true,
-            onFavorite: { withAnimation { store.toggleFavorite(note.id) } }
+            onFavorite: { withAnimation { store.toggleFavorite(note.id) } },
+            fontScale: store.fontScale
         )
     }
 
@@ -1076,7 +1110,8 @@ struct WallContent: View {
             tilt: true,
             neat: store.neatMode,
             isNew: note.id == store.lastAddedID,
-            onFavorite: { withAnimation { store.toggleFavorite(note.id) } }
+            onFavorite: { withAnimation { store.toggleFavorite(note.id) } },
+            fontScale: store.fontScale
         )
         // 卡片高度要从真实布局里量：判断「落在上半还是下半」需要它，
         // 而便签高度完全由内容决定，没有固定值可写
@@ -1140,13 +1175,13 @@ struct WallContent: View {
         }
         return VStack(spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 26, weight: .light))
+                .font(.icon(28, .semibold))
                 .foregroundStyle(T.textFaint)
             Text(title)
                 .font(.ui(14, .medium))
                 .foregroundStyle(T.textDim)
             Text(subtitle)
-                .font(.ui(12))
+                .font(.ui(T.auxSize))
                 .foregroundStyle(T.textFaint)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)
@@ -1172,7 +1207,7 @@ struct WallContent: View {
         if let message = toast.message {
             HStack(spacing: 10) {
                 Text(message)
-                    .font(.ui(12))
+                    .font(.ui(T.auxSize))
                     .foregroundStyle(T.text)
                 if let action = toast.actionTitle {
                     Button(action) { toast.runAction() }
@@ -1235,6 +1270,11 @@ struct WallContent: View {
     }
 
     private func commitDraft() {
+        // 输入法还在组字（拼音未上屏）时先收掉组合态：unmarkText 会同步触发
+        // textDidChange，ui.draft 里才有完整句子，否则只剩已上屏的部分（P0-8）。
+        if let tv = NSApp.keyWindow?.firstResponder as? NSTextView, tv.hasMarkedText() {
+            tv.unmarkText()
+        }
         var text = ui.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || ui.draftImage != nil else { return }
         // 选了「待办」：每行自动变成可勾选项，否则这个标签只是个装饰
@@ -1243,13 +1283,41 @@ struct WallContent: View {
         }
         var image: NoteImage? = nil
         if let ns = ui.draftImage {
-            image = ImageStore.save(ns)
+            if let saved = ImageStore.save(ns) {
+                image = saved
+            } else if text.isEmpty {
+                // 只有图、图又没存下来：没东西可存，别清空草稿（P1-10）。
+                ToastCenter.shared.show("图片保存失败")
+                return
+            } else {
+                ToastCenter.shared.show("图片保存失败，只保存了文字")
+            }
         }
         withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
             store.add(text: text, paper: ui.paper, tag: ui.tag, image: image)
         }
         ui.draft = ""
         withAnimation(.easeOut(duration: 0.15)) { ui.draftImage = nil }
+        ToastCenter.shared.show("已记下来")
+    }
+
+    /// 点「新建便签」/ 虚线空位时给英雄纸一个 0.9s 描边脉冲。
+    private func pulseComposer() {
+        ui.composerPulsing = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { ui.composerPulsing = false }
+    }
+
+    /// 捕获面板 ⌘E 带过来的草稿：写进英雄纸并抢回焦点；消费完立刻清掉。
+    private func consumePendingDraft() {
+        let ctx = AppContext.shared
+        guard let text = ctx.pendingDraftText else { return }
+        ui.draft = text
+        if let tag = ctx.pendingDraftTag { ui.tag = tag }
+        if let paper = ctx.pendingDraftPaper { ui.paper = paper }
+        ctx.pendingDraftText = nil
+        ctx.pendingDraftTag = nil
+        ctx.pendingDraftPaper = nil
+        ui.focusComposerToken += 1
     }
 
     /// 详情页里 ⌘V：把图片贴到当前便签上（已有图就替换，旧文件一并删掉）
@@ -1277,7 +1345,7 @@ struct ColorFilterPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("按纸色筛选")
-                .font(.ui(11, .medium))
+                .font(.ui(T.metaSize, .medium))
                 .foregroundStyle(T.textDim)
             HStack(spacing: 4) {
                 ForEach(Paper.allCases) { p in
@@ -1286,7 +1354,7 @@ struct ColorFilterPanel: View {
                         VStack(spacing: 5) {
                             PaperSwatch(paper: p, ink: T.text, selected: on, side: 22, cell: 30)
                             Text(p.title)
-                                .font(.ui(9.5))
+                                .font(.ui(T.captionSize))
                                 .foregroundStyle(on ? T.text : T.textFaint)
                         }
                         .frame(width: 34)
