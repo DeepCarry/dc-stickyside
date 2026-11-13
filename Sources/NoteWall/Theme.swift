@@ -158,7 +158,7 @@ enum T {
 
     // 圆角
     static let rWindow: CGFloat = 16
-    static let rCard: CGFloat = 12
+    static let rCard: CGFloat = 18
     static let rControl: CGFloat = 8
 
     // 间距

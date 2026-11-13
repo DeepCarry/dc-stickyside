@@ -406,14 +406,6 @@ struct SettingsSheet: View {
                                     .toggleStyle(.switch).labelsHidden().handCursor()
                             }
                         }
-                        row("整齐模式", subtitle: "关掉卡片的旋转、胶带与折角，墙面横平竖直") {
-                            if RenderFlags.snapshot {
-                                FakeSwitch(on: store.neatMode)
-                            } else {
-                                Toggle("", isOn: store.bind(\.neatMode))
-                                    .toggleStyle(.switch).labelsHidden().handCursor()
-                            }
-                        }
                         row("开机自动启动", subtitle: "登录时自动打开随手贴") {
                             if RenderFlags.snapshot {
                                 FakeSwitch(on: box.launchAtLogin)

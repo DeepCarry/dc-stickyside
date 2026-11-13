@@ -37,11 +37,10 @@ struct NoteBody: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+            ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
                 switch block {
                 case .text(let s):
-                    Text(s)
-                        .font(.ui(15 * fontScale))
+                    titleBodyText(s, isFirst: index == 0)
                         .foregroundStyle(note.paper.ink)
                         .lineSpacing(4)
                         .lineLimit(lineLimit)
@@ -58,6 +57,20 @@ struct NoteBody: View {
                 }
             }
         }
+    }
+
+    /// 首个文字段的首行是标题（17 semibold），其余正文 14.5；后续文字段全是正文。
+    /// 用 Text 拼接混排，仍是一个 Text，lineLimit/lineSpacing 照常生效。
+    private func titleBodyText(_ s: String, isFirst: Bool) -> Text {
+        guard isFirst else { return Text(s).font(.ui(14.5 * fontScale)) }
+        let lines = s.components(separatedBy: "\n")
+        guard let first = lines.first, !first.isEmpty else {
+            return Text(s).font(.ui(14.5 * fontScale))
+        }
+        let rest = lines.dropFirst().joined(separator: "\n")
+        var t = Text(first).font(.ui(17 * fontScale, .semibold))
+        if !rest.isEmpty { t = t + Text("\n" + rest).font(.ui(14.5 * fontScale)) }
+        return t
     }
 
     private enum Block {
@@ -164,11 +177,11 @@ struct NoteCard: View {
     var showCheckCount: Bool = true
     /// 墙上微转（按 id 哈希恒定角度）。紧凑行 / 边缘 / 刘海不转。
     var tilt: Bool = true
-    /// 整齐模式：关掉旋转、胶带与折角。
-    var neat: Bool = false
-    /// 刚贴上的那张：从 -6° 落下来一次。
+    /// 整齐模式：不转、间距拉开（折角与图钉保留）。默认整齐，与参考图一致。
+    var neat: Bool = true
+    /// 刚贴上的那张：从 -2° 落下来一次。
     var isNew: Bool = false
-    /// 列表视图的紧凑行：横排、无旋转、无胶带。
+    /// 列表视图的紧凑行：横排、无旋转、无图钉。
     var compact: Bool = false
     var onFavorite: () -> Void = {}
 
@@ -179,18 +192,20 @@ struct NoteCard: View {
     @State private var appeared = false
     private var hovering: Bool { hoverPreview || hover.value }
 
-    /// 同一张便签的角度恒定：用 id 的确定性哈希映射到 -2.4°~+2.4°。
+    /// 同一张便签的角度恒定：用 id 的确定性哈希映射到 -1.2°~+1.2°。
     /// 不能用 hashValue——Swift 的 Hasher 每次启动换种子，重启后整墙角度会重排。
+    /// 角度取边缘条的量级：边缘签 [3, -2.2, 2.4, -3]° 看着舒服是因为签窄（~30pt），
+    /// 墙上卡片宽 ~300pt，同样角度角落要摆 16pt；±1.2° 只摆 4–6pt，微微即可。
     private var tiltAngle: Double {
         guard tilt, !neat, !compact else { return 0 }
         let h = note.id.uuidString.utf8.reduce(0) { ($0 &* 31) &+ Int($1) }
-        let m = (h % 49 + 49) % 49
-        return Double(m) / 10.0 - 2.4
+        let m = (h % 25 + 25) % 25
+        return Double(m) / 10.0 - 1.2
     }
 
-    /// 悬停回正、平时微转；刚贴上的那张从 -6° 落下来。
+    /// 悬停回正、平时微转；刚贴上的那张从 -2° 落下来。
     private var displayAngle: Double {
-        if isNew && !appeared { return -6 }
+        if isNew && !appeared { return -2 }
         if hovering { return 0 }
         return tiltAngle
     }
@@ -228,16 +243,16 @@ struct NoteCard: View {
             content
             foot
         }
-        .padding(16)
+        .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: T.rCard, style: .continuous)
                 .fill(note.paper.paper)
                 // 浅色底上阴影要轻，重了整页发灰；深色底反过来，纸要浮起来
                 .shadow(color: Color.dyn(0x000000, 0x000000,
-                                         lightAlpha: hovering ? 0.16 : 0.10,
+                                         lightAlpha: hovering ? 0.16 : 0.12,
                                          darkAlpha: hovering ? 0.40 : 0.30),
-                        radius: hovering ? 14 : 10, x: 0, y: hovering ? 7 : 5)
+                        radius: hovering ? 18 : 14, x: 0, y: hovering ? 8 : 6)
         )
         .overlay(
             // 顶部受光：纸的上缘亮、下缘暗，135° 光源。整齐模式也留着——它只是光，不是装饰。
@@ -250,13 +265,12 @@ struct NoteCard: View {
                 .strokeBorder(T.cardEdge, lineWidth: 0.8)
                 .blendMode(.overlay)
         )
-        .overlay(alignment: .top) { tapeOverlay }
+        .overlay(alignment: .topTrailing) { pinOverlay }
         .overlay(alignment: .bottomTrailing) { foldOverlay }
-        .overlay(alignment: .topTrailing) {
-            if hovering && !note.isLocked { menuButton }
-        }
+        .overlay(alignment: .topTrailing) { cornerCluster }
         .offset(y: (isNew && !appeared) ? -16 : (hovering ? -1.5 : 0))
-        .rotationEffect(.degrees(displayAngle))
+        // 旋转轴钉在顶边：卡片像从顶部钉子处垂下来摆，而不是绕中心转。
+        .rotationEffect(.degrees(displayAngle), anchor: .top)
         // 正在拖的那张要明显「被拿起来」：留个半透明影子在原地，用户才知道自己在搬什么
         .opacity((isNew && !appeared) ? 0 : (isDragging ? 0.4 : 1))
         .scaleEffect(isDragging ? 0.985 : 1)
@@ -284,29 +298,25 @@ struct NoteCard: View {
         }
     }
 
-    /// 置顶的视觉语言是胶带：把纸贴在墙上的动作本身（0.3.0 scope 定，替代旧版的 ▲）。
-    /// 两端撕开：mask 在左右各留一道透明渐变。
+    /// 置顶的视觉语言是图钉（0.3.1，替代 0.3.0 的胶带：胶带占地方、不好看）。
+    /// 钉在右上角、半出角，顺时针转 28°；卡片旋转时图钉跟着转，它就是支点。
     @ViewBuilder
-    private var tapeOverlay: some View {
-        if note.isPinned && !compact && !neat {
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(LinearGradient(colors: [Color(hex: 0xFFF6BE).opacity(0.92),
-                                              Color(hex: 0xFAE896).opacity(0.82)],
-                                     startPoint: .top, endPoint: .bottom))
-                .frame(width: 86, height: 22)
-                .rotationEffect(.degrees(-2))
-                .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
-                .mask(LinearGradient(colors: [.clear, .black, .black, .clear],
-                                     startPoint: .leading, endPoint: .trailing))
-                .offset(y: -11)
+    private var pinOverlay: some View {
+        if note.isPinned && !compact {
+            Image(systemName: "pin.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Color(hex: 0xB45309))
+                .rotationEffect(.degrees(28))
+                .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
+                .offset(x: 8, y: -8)
         }
     }
 
-    /// 右下折角：纸的厚度。整齐模式与紧凑行不画。
+    /// 右下折角：纸的厚度。紧凑行不画；两种模式都画。
     /// 折角要顺着卡片的圆角走：把 18pt 的小块按卡片圆角裁一下，否则方角会戳出圆角外面。
     @ViewBuilder
     private var foldOverlay: some View {
-        if !compact && !neat {
+        if !compact {
             FoldShape()
                 .fill(.white.opacity(0.45))
                 .frame(width: 18, height: 18)
@@ -329,7 +339,7 @@ struct NoteCard: View {
     // MARK: - 紧凑行（列表视图）
 
     /// 列表视图的横排：类型图标 + 首行 + 标签 + 清单进度 + 时间。
-    /// 旋转、胶带、折角、阴影、拖拽都不进列表——列表是用来扫的，不是用来看纸的。
+    /// 旋转、图钉、折角、阴影、拖拽都不进列表——列表是用来扫的，不是用来看纸的。
     private var compactRow: some View {
         HStack(spacing: 10) {
             Image(systemName: typeSymbol)
@@ -401,16 +411,10 @@ struct NoteCard: View {
                 .foregroundStyle(note.paper.ink.opacity(0.55))
             }
             if note.isPinned && compact {
-                // 墙上置顶用胶带（0.3.0 scope）；紧凑行没有胶带，▲ 是唯一的置顶信号。
-                // PRD §2.5：置顶标识用 ▲，不用图钉意象。
+                // 墙上置顶用图钉（0.3.1）；紧凑行没有图钉，▲ 是唯一的置顶信号。
                 Image(systemName: "arrowtriangle.up.fill")
                     .font(.system(size: 7))
                     .foregroundStyle(note.paper.ink.opacity(0.45))
-            }
-            if note.favorite {
-                Image(systemName: "star.fill")
-                    .font(.system(size: 8))
-                    .foregroundStyle(Color(hex: 0xB8860B).opacity(0.85))
             }
             Spacer(minLength: 0)
         }
@@ -480,6 +484,20 @@ struct NoteCard: View {
             }
         }
         .padding(.top, 10)
+    }
+
+    /// 右上角：收藏星常驻 + 悬停「⋯」。图钉钉在角外（pinOverlay），三者不重叠。
+    private var cornerCluster: some View {
+        HStack(spacing: 8) {
+            if note.favorite {
+                Image(systemName: "star.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color(hex: 0xB8860B).opacity(0.9))
+            }
+            if hovering && !note.isLocked { menuButton }
+        }
+        .padding(.top, 10)
+        .padding(.trailing, 10)
     }
 
     /// 悬停才出现的「⋯」。一个入口装下所有操作，比在卡片角上排三四个图标更稳：
