@@ -158,7 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 菜单栏是唯一常驻的品牌露出，形状必须对得上，但又不能彩色——
         // 身边所有菜单栏图标都是单色的，彩色在那排里非常跳。
         // MenuBarIcon.make() 内部已经设了 isTemplate = true，交给系统按明暗自动反色。
-        item.button?.image = MenuBarIcon.make()
+        item.button?.image = MenuBarIcon.statusImage()
         item.menu = Self.makeStatusMenu(target: self)
         statusItem = item
     }

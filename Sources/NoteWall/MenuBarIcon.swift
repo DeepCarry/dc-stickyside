@@ -21,6 +21,21 @@ import AppKit
 enum MenuBarIcon {
     static let size = NSSize(width: 18, height: 18)
 
+    /// 状态栏里的显示倍率（只放大显示尺寸，画布与位图不动，自检口径不变）：
+    /// 设计稿字形在 18pt 画布里留白偏多，与邻座图标并排明显显小（Carry 真机反馈）。
+    /// 默认 1.2；可用 defaults 写 MenuBarIconDisplayScale 覆盖（1.0–2.0），方便真机 A/B 微调。
+    static var displayScale: CGFloat {
+        let v = UserDefaults.standard.double(forKey: "MenuBarIconDisplayScale")
+        return (v >= 1.0 && v <= 2.0) ? CGFloat(v) : 1.2
+    }
+
+    /// 状态栏按钮用的图：make() 的成品按 displayScale 放大显示尺寸
+    static func statusImage() -> NSImage {
+        let image = make()
+        image.size = NSSize(width: size.width * displayScale, height: size.height * displayScale)
+        return image
+    }
+
     // MARK: 几何（1024 空间 → 18pt）
 
     /// 每 pt 对应的 1024 空间单位
