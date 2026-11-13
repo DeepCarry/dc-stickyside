@@ -21,18 +21,6 @@ enum Paper: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    /// 折角翻面的中间色：纸色提亮 45%（与白混合），原型里逐色算好的值。
-    var paperLight: Color {
-        switch self {
-        case .yellow: return Color(hex: 0xFBF2CE)
-        case .pink:   return Color(hex: 0xF9E6EC)
-        case .blue:   return Color(hex: 0xE5EEFB)
-        case .mint:   return Color(hex: 0xE6F5EC)
-        case .purple: return Color(hex: 0xEFEAFA)
-        case .cream:  return Color(hex: 0xF7F2EB)
-        }
-    }
-
     var ink: Color {
         switch self {
         case .yellow: return Color(hex: 0x2C2718)

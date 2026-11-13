@@ -266,7 +266,6 @@ struct NoteCard: View {
                 .blendMode(.overlay)
         )
         .overlay(alignment: .topTrailing) { pinOverlay }
-        .overlay(alignment: .bottomTrailing) { foldOverlay }
         .overlay(alignment: .topTrailing) { cornerCluster }
         .offset(y: (isNew && !appeared) ? -16 : (hovering ? -1.5 : 0))
         // 旋转轴钉在顶边：卡片像从顶部钉子处垂下来摆，而不是绕中心转。
@@ -309,70 +308,6 @@ struct NoteCard: View {
                 .rotationEffect(.degrees(28))
                 .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
                 .offset(x: 8, y: -8)
-        }
-    }
-
-    /// 右下折角：纸角自然卷起。紧凑行不画；两种模式都画。
-    /// 0.3.3 起用贴图（FoldImage，42pt 透明 PNG）：代码画版本在快照上看着达标、真机上太淡，
-    /// 贴图是像素级保真。图是纸色无关的（翻面白带透明度、影子黑带透明度），一张图通吃六色纸。
-    /// 图解不出来时回退到代码画的旧折角（FoldFlapShape/FoldShadowShape，0.3.2 的 32pt 版）。
-    /// 折角要顺着卡片的圆角走：把 42pt 的小块按卡片圆角裁一下，否则方角会戳出圆角外面。
-    @ViewBuilder
-    private var foldOverlay: some View {
-        if !compact {
-            if let nsImage = FoldImage.nsImage {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .frame(width: FoldImage.size, height: FoldImage.size)
-                    .clipShape(RoundedRectangle(cornerRadius: T.rCard, style: .continuous))
-            } else {
-                ZStack {
-                    FoldShadowShape()
-                        .fill(LinearGradient(
-                            colors: [.black.opacity(0.20), .black.opacity(0)],
-                            startPoint: .bottomTrailing, endPoint: .topLeading))
-                        .blur(radius: 2.5)
-                    FoldFlapShape()
-                        .fill(RadialGradient(stops: [
-                            .init(color: .white, location: 0),
-                            .init(color: note.paper.paperLight, location: 0.45),
-                            .init(color: note.paper.paper, location: 1),
-                        ], center: .bottomTrailing, startRadius: 0, endRadius: 32))
-                }
-                .frame(width: 32, height: 32)
-                .clipShape(RoundedRectangle(cornerRadius: T.rCard, style: .continuous))
-            }
-        }
-    }
-
-    /// 曲面翻面：折线是向角心弯的二次贝塞尔弧，翻面是折线与卡片角之间的曲面三角。
-    /// 坐标为相对值（0.8125 = 原型 32pt 盒子里控制点 26pt 的位置），与盒子尺寸无关。
-    private struct FoldFlapShape: Shape {
-        func path(in rect: CGRect) -> Path {
-            var p = Path()
-            let w = rect.width, h = rect.height
-            p.move(to: CGPoint(x: 0, y: h))
-            p.addQuadCurve(to: CGPoint(x: w, y: 0),
-                           control: CGPoint(x: w * 0.8125, y: h * 0.8125))
-            p.addLine(to: CGPoint(x: w, y: h))
-            p.closeSubpath()
-            return p
-        }
-    }
-
-    /// 贴着折线的月牙形阴影：外缘是同一条折线弧，内缘是向卡片中心偏移的弧。
-    /// 填充黑渐变（折线处 0.20 → 内侧 0）再整体模糊，影子是渐隐的，不是一条线。
-    private struct FoldShadowShape: Shape {
-        func path(in rect: CGRect) -> Path {
-            var p = Path()
-            let w = rect.width, h = rect.height
-            p.move(to: CGPoint(x: 0, y: h))
-            p.addQuadCurve(to: CGPoint(x: w, y: 0),
-                           control: CGPoint(x: w * 0.8125, y: h * 0.8125))
-            p.addQuadCurve(to: CGPoint(x: 0, y: h),
-                           control: CGPoint(x: w * 0.375, y: h * 0.375))
-            p.closeSubpath()
-            return p
         }
     }
 
