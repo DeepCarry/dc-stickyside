@@ -20,6 +20,7 @@ final class CaptureModel: ObservableObject {
         text = ""
         image = nil
         hint = ""
+        tag = "灵感"
     }
 
     var isEmpty: Bool {
@@ -79,6 +80,9 @@ final class CaptureController {
     private var monitor: Any?
     let model = CaptureModel()
     private weak var store: AppStore?
+    /// 保存幂等：0.32s 收起延迟里再按 ⌘↩ 不会存出第二张（P0-4）。
+    /// 钉住模式下每次保存后清掉，同一会话里才能继续存下一张。
+    private var didSave = false
 
     func attach(store: AppStore) {
         self.store = store
@@ -86,6 +90,7 @@ final class CaptureController {
 
     func show() {
         guard let store else { return }
+        didSave = false
         // 墙列表每次唤起都刷新：面板可能开着的时候在别处新建了墙
         model.walls = store.walls.sorted { $0.sortOrder < $1.sortOrder }
         model.wallID = store.selectedWallID ?? model.walls.first?.id
@@ -108,14 +113,16 @@ final class CaptureController {
         installMonitor()
     }
 
-    func hide() {
+    /// 收起面板。resetDraft = false 时草稿留在 model 里，下次 ⌥Space 还在——
+    /// Esc 是「取消」，不是「丢弃」（P0-4，D2 默认）。
+    func hide(resetDraft: Bool = true) {
         // 关掉之前记下位置：下次唤起还在原处，不用每次重新找
         if let panel, panel.isVisible, let store {
             store.captureFrame = panel.frame
         }
         panel?.orderOut(nil)
         removeMonitor()
-        model.reset()
+        if resetDraft { model.reset() }
     }
 
     private func buildPanel() {
@@ -203,9 +210,9 @@ final class CaptureController {
     }
 
     private func handleKey(_ event: NSEvent) -> Bool {
-        // Esc：有内容存草稿，没内容直接关
+        // Esc：取消，不保存。草稿留在 model 里，下次 ⌥Space 还在（P0-4）。
         if event.keyCode == 53 {
-            if model.isEmpty { hide() } else { save() }
+            hide(resetDraft: false)
             return true
         }
         // ⌘↩ 保存
@@ -248,25 +255,41 @@ final class CaptureController {
     }
 
     private func expand() {
+        // 草稿先交出去再收起：hide() 会 reset model，顺序反了草稿就丢了（P0-3）。
+        AppContext.shared.pendingDraftText = model.text
+        AppContext.shared.pendingDraftTag = model.tag
+        AppContext.shared.pendingDraftPaper = model.paper
+        NotificationCenter.default.post(name: .noteWallOpenDraft, object: nil)
         hide()
         AppDelegate.bringWallToFront()
     }
 
     func save() {
         guard let store, !model.isEmpty else { close(); return }
+        guard !didSave else { return }
         var noteImage: NoteImage? = nil
         if let img = model.image {
-            noteImage = ImageStore.save(img)
+            if let saved = ImageStore.save(img) {
+                noteImage = saved
+            } else if model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                // 只有图、图又没存下来：没东西可存，别清空草稿（P1-10）。
+                ToastCenter.shared.show("图片保存失败")
+                return
+            } else {
+                ToastCenter.shared.show("图片保存失败，只保存了文字")
+            }
         }
         // 选了「待办」：每行自动变成可勾选项
         var text = model.text
         if model.tag == "待办" {
             text = Checklist.asTodoList(text)
         }
+        didSave = true
         store.add(text: text, paper: model.paper, tag: model.tag,
                   image: noteImage, wallID: model.wallID)
         if model.pinned {
             model.reset()
+            didSave = false
             model.clipboardHasImage = ImageStore.pasteboardHasImage()
             model.hint = "已保存"
             resize()
@@ -342,14 +365,14 @@ struct CaptureView: View {
     private var topBar: some View {
         HStack(spacing: 6) {
             Text("新便签")
-                .font(.ui(11.5, .medium))
+                .font(.ui(T.auxSize, .medium))
                 .foregroundStyle(T.textDim)
             ForEach(["灵感", "想法", "待办", "资料"], id: \.self) { t in
                 Button {
                     model.tag = t
                 } label: {
                     Text(t)
-                        .font(.ui(11))
+                        .font(.ui(T.metaSize))
                         .foregroundStyle(model.tag == t ? T.accent : T.textFaint)
                         .frame(height: 22)
                         .padding(.horizontal, 8)
@@ -362,12 +385,12 @@ struct CaptureView: View {
             Spacer()
             if model.pinned {
                 Label("已钉住", systemImage: "pin.fill")
-                    .font(.ui(10.5))
+                    .font(.ui(T.captionSize))
                     .foregroundStyle(T.accent)
             }
             Button(action: onClose) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.icon(9, .bold))
                     .foregroundStyle(T.textFaint)
                     .frame(width: 20, height: 20)
                     .background(Circle().fill(T.inset))
@@ -427,7 +450,7 @@ struct CaptureView: View {
                         model.hint = ""
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.icon(8, .bold))
                             .foregroundStyle(.white)
                             .frame(width: 17, height: 17)
                             .background(Circle().fill(Color.black.opacity(0.55)))
@@ -436,7 +459,7 @@ struct CaptureView: View {
                     .padding(5)
                 }
             Text("图片会作为这张便签的一部分保存")
-                .font(.ui(10.5))
+                .font(.ui(T.captionSize))
                 .foregroundStyle(T.textFaint)
                 .padding(.top, 3)
             Spacer(minLength: 0)
@@ -451,11 +474,11 @@ struct CaptureView: View {
             Spacer(minLength: 8)
             if !model.hint.isEmpty {
                 Text(model.hint)
-                    .font(.ui(10.5))
+                    .font(.ui(T.captionSize))
                     .foregroundStyle(T.textFaint)
             }
             Text("⌘ ↩")
-                .font(.ui(10.5))
+                .font(.ui(T.captionSize))
                 .foregroundStyle(T.textFaint)
             Button(action: onSave) {
                 Text("保存")
@@ -492,13 +515,13 @@ struct CaptureView: View {
     private var wallChip: some View {
         HStack(spacing: 5) {
             Image(systemName: "square.stack")
-                .font(.system(size: 9.5, weight: .medium))
+                .font(.icon(9.5, .medium))
             Text(model.wallName)
-                .font(.ui(11))
+                .font(.ui(T.metaSize))
                 .lineLimit(1)
             if model.walls.count > 1 {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .semibold))
+                    .font(.icon(7, .semibold))
             }
         }
         .foregroundStyle(T.textDim)

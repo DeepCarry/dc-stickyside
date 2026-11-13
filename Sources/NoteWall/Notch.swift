@@ -209,11 +209,11 @@ enum NotchRatioPreview {
 
         ("点击态：等比放大 —— 宽高比锁死物理刘海，只是尺寸变大" as NSString)
             .draw(at: NSPoint(x: pad, y: H - 32), withAttributes: [
-                .font: NSFont.systemFont(ofSize: 16, weight: .semibold), .foregroundColor: ink])
+                .font: AppFont.pingFang(size: 16, weight: .semibold), .foregroundColor: ink])
         (String(format: "基准 %.0f × %.0f（比例 %.2f : 1）· 圆角按同比例放大 · 灰线为屏幕宽 %.0f",
                 g.width, g.height, g.aspectRatio, screenWidth) as NSString)
             .draw(at: NSPoint(x: pad, y: H - 52), withAttributes: [
-                .font: NSFont.systemFont(ofSize: 12.5, weight: .regular), .foregroundColor: sub])
+                .font: AppFont.pingFang(size: 13, weight: .regular), .foregroundColor: sub])
 
         /// 顶边贴住屏幕、只有下两角圆的「垂下来」形状
         func hangingShape(width w: CGFloat, height h: CGFloat, radius r: CGFloat) -> NSBezierPath {
@@ -263,7 +263,7 @@ enum NotchRatioPreview {
                                  s, Int(p.width.rounded()), Int(p.height.rounded()), ratio)
             (caption as NSString).draw(at: NSPoint(x: pad, y: shapeTop - p.height - 19),
                                        withAttributes: [
-                .font: NSFont.monospacedSystemFont(ofSize: 12.5, weight: .medium),
+                .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .medium),
                 .foregroundColor: NSColor(srgbRed: 0.36, green: 0.34, blue: 0.32, alpha: 1)])
             top -= blockHeight(s)
         }
@@ -450,6 +450,9 @@ final class NotchController {
         model.onToggleCheck = { [weak self] note, itemID in
             guard let self else { return }
             self.store?.toggleCheck(noteID: note.id, itemID: itemID)
+            // 勾选后立刻把最新正文同步回草稿：不然关闭时 flushSave 会把旧草稿
+            // 写回去，勾选就丢了（P0-2）。
+            self.model.draft = self.store?.notes.first(where: { $0.id == note.id })?.text ?? note.text
             self.syncDetail()
         }
         model.onOpenInWall = { [weak self] note in
@@ -461,7 +464,6 @@ final class NotchController {
             self?.collapseNow()
             AppDelegate.bringWallToFront()
         }
-        model.onDraftChanged = { [weak self] text in self?.editChanged(text) }
         model.onToggleEditing = { [weak self] note in
             guard let self else { return }
             if self.model.isEditingText {
@@ -535,11 +537,11 @@ final class NotchController {
         refreshNotes()
     }
 
-    /// 编辑会话判定：详情打开且正文编辑器在场（普通便签恒在场；清单只在文本编辑时在场）。
+    /// 编辑会话判定：详情打开就是会话。清单详情没有正文编辑器，但鼠标移开
+    /// 同样不该收起——之前只认「在编辑文本」，清单详情一移开就 0.45s 后收起（P1-8）。
     /// 会话中鼠标移开不收起，收起走点外 / Esc / 返回——与边缘抽出面板同一套行为。
     private var editSessionActive: Bool {
-        guard let detail = model.detailNote else { return false }
-        return model.isEditingText || !detail.isChecklist
+        model.detailNote != nil
     }
 
     /// 与边缘面板同一套草稿保存：记「停手」不记「击键」，250ms 防抖
@@ -670,12 +672,15 @@ final class NotchController {
     private func apply(_ expanded: Bool) {
         isExpanded = expanded
         if !expanded {
+            // 收起前先记下在看的便签：按策略重新上锁（P1-12，WallView 详情页同款）。
+            let closingID = model.detailNote?.id
             flushSave()
             model.detailNote = nil
             model.isEditingText = false
             panel?.allowKey = false
             stopSessionMonitors()
             stopOutsideClickWatch()
+            if let id = closingID { store?.relockAfterViewing(id) }
         } else {
             startOutsideClickWatch()
         }
@@ -746,9 +751,9 @@ struct NotchListView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: symbol)
-                    .font(.system(size: 11.5, weight: .semibold))
+                    .font(.icon(T.auxSize, .semibold))
                 Text(label)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.ui(T.auxSize, .medium))
                     .lineLimit(1)
             }
             .foregroundStyle(Color.white.opacity(0.92))
@@ -828,18 +833,18 @@ struct NotchNoteRow: View {
             thumb
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.system(size: 12.5, weight: .medium))
+                    .font(.ui(T.auxSize, .medium))
                     .foregroundStyle(Color.white.opacity(0.92))
                     .lineLimit(1)
                 HStack(spacing: 5) {
                     if note.isPinned {
                         Image(systemName: "pin.fill")
-                            .font(.system(size: 8.5))
+                            .font(.icon(8.5))
                     }
                     Text(subtitle)
                         .lineLimit(1)
                 }
-                .font(.system(size: 10.5))
+                .font(.ui(T.captionSize))
                 .foregroundStyle(Color.white.opacity(0.45))
             }
             Spacer(minLength: 4)
@@ -873,7 +878,7 @@ struct NotchNoteRow: View {
     private func iconButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 11, weight: .medium))
+                .font(.icon(T.metaSize, .medium))
                 .foregroundStyle(Color.white.opacity(0.88))
                 .frame(width: 24, height: 24)
                 .background(
@@ -887,6 +892,10 @@ struct NotchNoteRow: View {
     }
 
     private func copyTapped() {
+        if note.isLocked {
+            ToastCenter.shared.show(NoteCopy.lockedToast)
+            return
+        }
         guard let r = model.onCopyNote?(note), r != .nothing else { return }
         copied = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
@@ -977,9 +986,9 @@ struct NotchNoteDetailView: View {
             Button { model.onCloseDetail?() } label: {
                 HStack(spacing: 2) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.icon(T.metaSize, .semibold))
                     Text("返回")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.ui(T.auxSize, .medium))
                 }
                 .foregroundStyle(ink.opacity(0.85))
                 .padding(.horizontal, 8)
@@ -993,16 +1002,16 @@ struct NotchNoteDetailView: View {
             Spacer(minLength: 0)
             if model.flashSaved {
                 Text("已保存")
-                    .font(.system(size: 11))
+                    .font(.ui(T.metaSize))
                     .foregroundStyle(inkSoft)
             }
             if note.isChecklist {
                 Button { model.onToggleEditing?(note) } label: {
                     HStack(spacing: 3) {
                         Image(systemName: model.isEditingText ? "checkmark" : "pencil")
-                            .font(.system(size: 10.5, weight: .semibold))
+                            .font(.icon(T.captionSize, .semibold))
                         Text(model.isEditingText ? "完成" : "编辑")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.ui(T.auxSize, .medium))
                     }
                     .foregroundStyle(ink.opacity(0.85))
                     .padding(.horizontal, 8)
@@ -1015,7 +1024,7 @@ struct NotchNoteDetailView: View {
                 .buttonStyle(.plain).handCursor()
             }
             Text(meta)
-                .font(.system(size: 11))
+                .font(.ui(T.metaSize))
                 .foregroundStyle(inkSoft)
                 .lineLimit(1)
         }
@@ -1086,10 +1095,10 @@ struct NotchNoteDetailView: View {
         Button { model.onToggleCheck?(note, item.id) } label: {
             HStack(spacing: 8) {
                 Image(systemName: item.done ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 15))
+                    .font(.icon(15))
                     .foregroundStyle(item.done ? ink : ink.opacity(0.35))
                 Text(item.text)
-                    .font(.system(size: 13.5))
+                    .font(.ui(13.5))
                     .foregroundStyle(item.done ? inkSoft : ink)
                     .strikethrough(item.done, color: inkSoft)
                     .multilineTextAlignment(.leading)
@@ -1118,9 +1127,9 @@ struct NotchNoteDetailView: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: symbol)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.icon(T.auxSize, .medium))
                 Text(label)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.ui(T.auxSize, .medium))
             }
             .foregroundStyle(ink.opacity(0.9))
             .padding(.horizontal, 10)
@@ -1134,6 +1143,10 @@ struct NotchNoteDetailView: View {
     }
 
     private func copyTapped() {
+        if note.isLocked {
+            ToastCenter.shared.show(NoteCopy.lockedToast)
+            return
+        }
         guard let r = model.onCopyNote?(note), r != .nothing else { return }
         copied = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { copied = false }
