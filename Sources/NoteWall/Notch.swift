@@ -351,6 +351,10 @@ final class NotchController {
     private var saveWork: DispatchWorkItem?
     private var outsideMonitor: Any?
     private var escMonitor: Any?
+    /// 点外关闭的轮询兜底（0.3.1）：全局鼠标监视器在该 App 内疑似不触发，
+    /// 这里每 0.1s 查一次「鼠标在面板外 + 刚按下」才收起，不依赖无障碍授权。
+    private var outsideClickTimer: Timer?
+    private var wasMouseDown = false
     private var isFlushing = false
     private var screenObserver: NSObjectProtocol?
     private let model = NotchModel()
@@ -571,35 +575,62 @@ final class NotchController {
         }
     }
 
-    /// 会话监听（仅编辑会话期间，同边缘面板 startMonitors）：点外 = 写回收起；Esc 分层处理
+    /// 会话监听（仅编辑会话期间，同边缘面板 startMonitors）：点外 = 写回收起；Esc 分层处理。
+    /// 0.3.1：先停再装（同 EdgeDeck），修掉 escMonitor 每次调用都重复装的泄漏；
+    /// 回调里先判点击是否在面板内，在内不处理（全局监视器不给坐标，用当时鼠标位置判断）。
     private func updateSessionMonitors() {
-        if editSessionActive {
-            guard outsideMonitor == nil else { return }
-            outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    self?.flushSave()
-                    self?.collapseNow()
-                }
+        stopSessionMonitors()
+        guard editSessionActive else { return }
+        outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if let frame = self.panel?.frame, frame.contains(NSEvent.mouseLocation) { return }
+                self.flushSave()
+                self.collapseNow()
             }
-            escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard event.keyCode == 53 else { return event }   // Esc
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    if self.model.isEditingText {
-                        self.flushSave()
-                        self.model.isEditingText = false
-                        self.syncDetail()
-                        self.updateSessionMonitors()
-                    } else {
-                        self.flushSave()
-                        self.collapseNow()
-                    }
-                }
-                return nil
-            }
-        } else {
-            stopSessionMonitors()
         }
+        escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return event }   // Esc
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if self.model.isEditingText {
+                    self.flushSave()
+                    self.model.isEditingText = false
+                    self.syncDetail()
+                    self.updateSessionMonitors()
+                } else {
+                    self.flushSave()
+                    self.collapseNow()
+                }
+            }
+            return nil
+        }
+    }
+
+    /// 点外关闭的轮询（0.3.1，兜底）：展开即生效，列表页与详情页一致。
+    /// 上升沿判断：从面板内开始的拖拽（编辑器里选字后拖出面板），按下时鼠标在内，不误关。
+    private func startOutsideClickWatch() {
+        stopOutsideClickWatch()
+        wasMouseDown = false
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkOutsideClick() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        outsideClickTimer = timer
+    }
+
+    private func stopOutsideClickWatch() {
+        outsideClickTimer?.invalidate()
+        outsideClickTimer = nil
+    }
+
+    private func checkOutsideClick() {
+        guard isExpanded, let frame = panel?.frame else { return }
+        let down = NSEvent.pressedMouseButtons != 0
+        defer { wasMouseDown = down }
+        guard down, !wasMouseDown, !frame.contains(NSEvent.mouseLocation) else { return }
+        flushSave()
+        collapseNow()
     }
 
     private func stopSessionMonitors() {
@@ -644,6 +675,9 @@ final class NotchController {
             model.isEditingText = false
             panel?.allowKey = false
             stopSessionMonitors()
+            stopOutsideClickWatch()
+        } else {
+            startOutsideClickWatch()
         }
         model.isExpanded = expanded
         guard let p = panel else { return }
