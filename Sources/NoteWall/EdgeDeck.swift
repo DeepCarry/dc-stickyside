@@ -203,8 +203,16 @@ final class EdgeDeckController {
     private var cancellables: Set<AnyCancellable> = []
     private var collapseWork: DispatchWorkItem?
     private var saveWork: DispatchWorkItem?
+    /// flushSave/collapse 互调的防重入：锁/删分支里 flushSave 会调 collapse，
+    /// 没这道闸会无限递归栈溢出（P0-1）。与 Notch 的 isFlushing 同款。
+    private var isFlushing = false
+    private var isCollapsing = false
     private var outsideMonitor: Any?
     private var escMonitor: Any?
+    /// 点外关闭的轮询兜底（0.3.1 刘海同款）：全局鼠标监视器在该 App 内疑似不触发，
+    /// 这里每 0.1s 查一次「鼠标在面板外 + 刚按下」才收起，不依赖无障碍授权。
+    private var outsideClickTimer: Timer?
+    private var wasMouseDown = false
     private var screenObserver: NSObjectProtocol?
     private var moveObserver: NSObjectProtocol?
 
@@ -418,6 +426,14 @@ final class EdgeDeckController {
 
     /// 收起回细条。所有离开路径（移出 / Esc / 点别处 / 关设置）都汇到这里。
     func collapse() {
+        guard !isCollapsing else { return }
+        isCollapsing = true
+        defer { isCollapsing = false }
+        // 写回前先记下在编的便签：收起后按策略重新上锁（P1-12）。
+        let pulledID: UUID? = {
+            if case let .pull(id) = model.phase { return id }
+            return nil
+        }()
         collapseWork?.cancel()
         collapseWork = nil
         flushSave()
@@ -428,6 +444,7 @@ final class EdgeDeckController {
         // 编辑结束才允许重排：「最近编辑」的顺序在这一刻才刷新，
         // 用户已经把手里的纸放回去了，跳位不会被看见。
         model.frozenOrder = nil
+        if let id = pulledID { store?.relockAfterViewing(id) }
         if wasKey, let panel {
             // NSPanel 没有公开的「放弃 key」API。orderOut 会连带放弃 key，
             // 键盘焦点回到之前正在用的窗口；立刻 orderFront 把细条摆回去。
@@ -448,6 +465,9 @@ final class EdgeDeckController {
 
     /// 写回前的最后一道闸：便签可能在这几秒内被锁定/删除，绝不能把明文写进密文便签。
     func flushSave() {
+        guard !isFlushing else { return }
+        isFlushing = true
+        defer { isFlushing = false }
         saveWork?.cancel()
         saveWork = nil
         guard case let .pull(id) = model.phase, let store else { return }
@@ -482,6 +502,7 @@ final class EdgeDeckController {
             MainActor.assumeIsolated { self?.collapse() }
             return nil
         }
+        startOutsideClickWatch()
     }
 
     private func stopMonitors() {
@@ -489,6 +510,32 @@ final class EdgeDeckController {
         if let escMonitor { NSEvent.removeMonitor(escMonitor) }
         outsideMonitor = nil
         escMonitor = nil
+        stopOutsideClickWatch()
+    }
+
+    /// 点外关闭的轮询（0.3.1 刘海同款）：抽出态即生效。
+    /// 上升沿判断：从面板内开始的拖拽（编辑器里选字后拖出面板），按下时鼠标在内，不误关。
+    private func startOutsideClickWatch() {
+        stopOutsideClickWatch()
+        wasMouseDown = false
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkOutsideClick() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        outsideClickTimer = timer
+    }
+
+    private func stopOutsideClickWatch() {
+        outsideClickTimer?.invalidate()
+        outsideClickTimer = nil
+    }
+
+    private func checkOutsideClick() {
+        guard case .pull = model.phase, let frame = panel?.frame else { return }
+        let down = NSEvent.pressedMouseButtons != 0
+        defer { wasMouseDown = down }
+        guard down, !wasMouseDown, !frame.contains(NSEvent.mouseLocation) else { return }
+        collapse()
     }
 
     // MARK: 右键菜单
@@ -703,7 +750,7 @@ struct EdgeDeckView: View {
         let lean = pulled ? 0 : leans[index % 4] * (side == .right ? 1 : -1)
         return Button { onPick(note.id) } label: {
             VStack(spacing: 1) {
-                verticalChars(String(note.edgeTitle.prefix(4)), ink: note.paper.ink, size: 10.5)
+                verticalChars(String(note.edgeTitle.prefix(4)), ink: note.paper.ink, size: 12)
                 Spacer(minLength: 0)
             }
             .padding(.top, 8)
@@ -791,7 +838,7 @@ struct EdgeDeckView: View {
                             action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.icon(10, .semibold))
                 .foregroundStyle(Color.dyn(0x3A3A3E, 0xE9E9ED))
                 .frame(width: EdgeDeckGeom.actionSize, height: EdgeDeckGeom.actionSize)
                 .background {
@@ -813,6 +860,10 @@ struct EdgeDeckView: View {
     /// 一键复制整张便签：文字用当前草稿（可能还没写回 store），图片用原图。
     /// 边缘面板此前没有任何复制入口，想拷走一条码只能全选再 ⌘C，图片更没路。
     private func copyCurrent(_ note: Note) {
+        if note.isLocked {
+            ToastCenter.shared.show(NoteCopy.lockedToast)
+            return
+        }
         let r = NoteCopy.copy(note, text: model.draft)
         ToastCenter.shared.show(r.toast)
     }
@@ -822,19 +873,19 @@ struct EdgeDeckView: View {
             HStack(spacing: 6) {
                 if let note, !note.tag.isEmpty {
                     Text(note.tag)
-                        .font(.ui(10.5, .medium))
+                        .font(.ui(T.captionSize, .medium))
                         .foregroundStyle(paper.ink.opacity(0.55))
                 }
                 Spacer()
                 if let note {
                     Text(TimeLabel.card(note.updatedAt))
-                        .font(.ui(10.5))
+                        .font(.ui(T.captionSize))
                         .foregroundStyle(paper.ink.opacity(0.38))
                 }
                 if let note {
                     Button { copyCurrent(note) } label: {
                         Image(systemName: "doc.on.doc")
-                            .font(.system(size: 8.5, weight: .bold))
+                            .font(.icon(8.5, .bold))
                             .foregroundStyle(paper.ink.opacity(0.45))
                             .frame(width: 19, height: 19)
                             .background(Circle().fill(paper.ink.opacity(0.08)))
@@ -844,7 +895,7 @@ struct EdgeDeckView: View {
                 }
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 8.5, weight: .bold))
+                        .font(.icon(8.5, .bold))
                         .foregroundStyle(paper.ink.opacity(0.45))
                         .frame(width: 19, height: 19)
                         .background(Circle().fill(paper.ink.opacity(0.08)))
@@ -869,11 +920,11 @@ struct EdgeDeckView: View {
 
             HStack {
                 Text("Esc 收起")
-                    .font(.ui(10))
+                    .font(.ui(T.captionSize))
                     .foregroundStyle(paper.ink.opacity(0.30))
                 Spacer()
                 Text("已保存")
-                    .font(.ui(10.5, .medium))
+                    .font(.ui(T.captionSize, .medium))
                     .foregroundStyle(paper.ink.opacity(0.55))
                     .opacity(model.flashSaved ? 1 : 0)
                     .animation(.easeInOut(duration: 0.2), value: model.flashSaved)
@@ -898,11 +949,11 @@ struct EdgeDeckView: View {
 
     /// 中文竖排：逐个字符堆叠。SwiftUI 没有 writing-mode，
     /// 旋转 90° 会把汉字躺倒——堆叠才是「竖排」，旋转只是「横放」。
-    private func verticalChars(_ s: String, ink: Color, size: CGFloat = 11) -> some View {
+    private func verticalChars(_ s: String, ink: Color, size: CGFloat = 12) -> some View {
         VStack(spacing: 1) {
             ForEach(Array(s.enumerated()), id: \.offset) { _, ch in
                 Text(String(ch))
-                    .font(.system(size: size, weight: .semibold))
+                    .font(.ui(size, .semibold))
                     .foregroundStyle(ink)
             }
         }

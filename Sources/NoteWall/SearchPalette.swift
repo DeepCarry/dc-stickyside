@@ -64,7 +64,7 @@ struct SearchPalette: View {
     private var inputRow: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 14))
+                .font(.icon(14))
                 .foregroundStyle(T.textFaint)
             if RenderFlags.snapshot {
                 Text(store.searchText.isEmpty ? "搜索便签、标签、墙…" : store.searchText)
@@ -82,7 +82,7 @@ struct SearchPalette: View {
             }
             Button { close() } label: {
                 Text("esc")
-                    .font(.ui(10.5, .medium))
+                    .font(.ui(T.captionSize, .medium))
                     .foregroundStyle(T.textFaint)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
@@ -99,7 +99,7 @@ struct SearchPalette: View {
     private var resultsArea: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(queryIsEmpty ? "最近" : "搜索结果")
-                .font(.ui(11, .medium))
+                .font(.ui(T.metaSize, .medium))
                 .foregroundStyle(T.textFaint)
                 .padding(.horizontal, 12)
                 .padding(.top, 8)
@@ -139,13 +139,13 @@ struct SearchPalette: View {
                     .foregroundStyle(T.text)
                     .lineLimit(1)
                 Text("\(wallName(note)) · \(TimeLabel.card(note.createdAt))")
-                    .font(.ui(11))
+                    .font(.ui(T.metaSize))
                     .foregroundStyle(T.textFaint)
             }
             Spacer(minLength: 0)
             if note.isLocked {
                 Image(systemName: "lock.fill")
-                    .font(.system(size: 10))
+                    .font(.icon(10))
                     .foregroundStyle(T.textFaint)
             }
         }
@@ -161,11 +161,11 @@ struct SearchPalette: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
-            Text("↑↓ 选择").font(.ui(11)).foregroundStyle(T.textFaint)
-            Text("⏎ 打开").font(.ui(11)).foregroundStyle(T.textFaint)
-            Text("Esc 关闭").font(.ui(11)).foregroundStyle(T.textFaint)
+            Text("↑↓ 选择").font(.ui(T.metaSize)).foregroundStyle(T.textFaint)
+            Text("⏎ 打开").font(.ui(T.metaSize)).foregroundStyle(T.textFaint)
+            Text("Esc 关闭").font(.ui(T.metaSize)).foregroundStyle(T.textFaint)
             Spacer()
-            Text("支持 #标签 · 墙:名字 · 有图 · 锁:").font(.ui(11)).foregroundStyle(T.textFaint)
+            Text("支持 #标签 · 墙:名字 · 有图 · 锁:").font(.ui(T.metaSize)).foregroundStyle(T.textFaint)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 9)

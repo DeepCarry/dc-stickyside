@@ -66,12 +66,12 @@ struct SidebarView: View {
                             .font(.ui(14.5, .bold))
                             .foregroundStyle(T.text)
                         Text("StickySide")
-                            .font(.ui(10.5, .medium))
+                            .font(.ui(T.captionSize, .medium))
                             .foregroundStyle(T.textFaint)
                     }
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.icon(10, .semibold))
                         .foregroundStyle(T.textFaint)
                 }
             }
@@ -103,7 +103,7 @@ struct SidebarView: View {
                 }
             }
             navRow(title: "回收站", symbol: "trash", count: store.trashedNotes.count,
-                   selected: false) {
+                   selected: ui.showTrash) {
                 ui.showTrash = true
             }
         }
@@ -115,7 +115,7 @@ struct SidebarView: View {
         Button(action: action) {
             HStack(spacing: 9) {
                 Image(systemName: symbol)
-                    .font(.system(size: 13))
+                    .font(.icon(13))
                     .foregroundStyle(selected ? T.text : T.textDim)
                     .frame(width: 18)
                 if !isRail {
@@ -125,7 +125,7 @@ struct SidebarView: View {
                     Spacer(minLength: 0)
                     if let count {
                         Text("\(count)")
-                            .font(.ui(11.5))
+                            .font(.ui(T.auxSize))
                             .foregroundStyle(T.textFaint)
                     }
                 }
@@ -150,7 +150,7 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 2) {
             if !isRail {
                 Text("分类")
-                    .font(.ui(11, .bold))
+                    .font(.ui(T.metaSize, .bold))
                     .foregroundStyle(T.textFaint)
                     .padding(.horizontal, 9)
                     .padding(.top, 14)
@@ -165,7 +165,7 @@ struct SidebarView: View {
             } label: {
                 HStack(spacing: 9) {
                     Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.icon(11, .medium))
                         .foregroundStyle(T.textFaint)
                         .frame(width: 18)
                     if !isRail {
@@ -200,7 +200,7 @@ struct SidebarView: View {
                         .foregroundStyle(selected ? T.text : T.textDim)
                     Spacer(minLength: 0)
                     Text("\(store.count(for: wall.id))")
-                        .font(.ui(11.5))
+                        .font(.ui(T.auxSize))
                         .foregroundStyle(T.textFaint)
                 }
             }
@@ -256,7 +256,7 @@ struct SidebarView: View {
             Button { ui.showSettings = true } label: {
                 HStack(spacing: 9) {
                     Image(systemName: "gearshape")
-                        .font(.system(size: 13))
+                        .font(.icon(13))
                         .foregroundStyle(T.textDim)
                         .frame(width: 18)
                     if !isRail {

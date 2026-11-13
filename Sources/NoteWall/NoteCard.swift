@@ -62,14 +62,14 @@ struct NoteBody: View {
     /// 首个文字段的首行是标题（17 semibold），其余正文 14.5；后续文字段全是正文。
     /// 用 Text 拼接混排，仍是一个 Text，lineLimit/lineSpacing 照常生效。
     private func titleBodyText(_ s: String, isFirst: Bool) -> Text {
-        guard isFirst else { return Text(s).font(.ui(14.5 * fontScale)) }
+        guard isFirst else { return Text(s).font(.ui(14.5 * fontScale, scaled: false)) }
         let lines = s.components(separatedBy: "\n")
         guard let first = lines.first, !first.isEmpty else {
-            return Text(s).font(.ui(14.5 * fontScale))
+            return Text(s).font(.ui(14.5 * fontScale, scaled: false))
         }
         let rest = lines.dropFirst().joined(separator: "\n")
-        var t = Text(first).font(.ui(17 * fontScale, .semibold))
-        if !rest.isEmpty { t = t + Text("\n" + rest).font(.ui(14.5 * fontScale)) }
+        var t = Text(first).font(.ui(17 * fontScale, .semibold, scaled: false))
+        if !rest.isEmpty { t = t + Text("\n" + rest).font(.ui(14.5 * fontScale, scaled: false)) }
         return t
     }
 
@@ -134,14 +134,14 @@ struct CheckRow: View {
                         .frame(width: 13, height: 13)
                     if item.done {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.icon(8, .bold))
                             .foregroundStyle(paper.ink.opacity(0.75))
                     }
                 }
                 .padding(.top, 2)
 
                 Text(item.text)
-                    .font(.ui(14 * scale))
+                    .font(.ui(14 * scale, scaled: false))
                     .foregroundStyle(paper.ink.opacity(item.done ? 0.42 : 1))
                     .strikethrough(item.done, color: paper.ink.opacity(0.4))
                     .lineSpacing(2)
@@ -184,6 +184,7 @@ struct NoteCard: View {
     /// 列表视图的紧凑行：横排、无旋转、无图钉。
     var compact: Bool = false
     var onFavorite: () -> Void = {}
+    var fontScale: CGFloat = 1
 
     @StateObject private var hover = UIBox(false)
     /// 指针停在「⋯」上时不触发卡片的单击（否则点菜单会连带打开详情页）
@@ -303,7 +304,7 @@ struct NoteCard: View {
     private var pinOverlay: some View {
         if note.isPinned && !compact {
             Image(systemName: "pin.fill")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.icon(16, .semibold))
                 .foregroundStyle(Color(hex: 0xB45309))
                 .rotationEffect(.degrees(28))
                 .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
@@ -318,7 +319,7 @@ struct NoteCard: View {
     private var compactRow: some View {
         HStack(spacing: 10) {
             Image(systemName: typeSymbol)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.icon(12, .semibold))
                 .foregroundStyle(note.paper.ink.opacity(0.6))
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
@@ -328,7 +329,7 @@ struct NoteCard: View {
                     .lineLimit(1)
                 if !note.tag.isEmpty {
                     Text(note.tag)
-                        .font(.ui(11))
+                        .font(.ui(T.metaSize))
                         .foregroundStyle(note.paper.ink.opacity(0.5))
                 }
             }
@@ -336,21 +337,21 @@ struct NoteCard: View {
             if note.isChecklist {
                 let p = note.checklistProgress
                 Text("\(p.done)/\(p.total)")
-                    .font(.ui(11))
+                    .font(.ui(T.metaSize))
                     .foregroundStyle(note.paper.ink.opacity(0.5))
             }
             if note.isPinned {
                 Image(systemName: "arrowtriangle.up.fill")
-                    .font(.system(size: 7))
+                    .font(.icon(7))
                     .foregroundStyle(note.paper.ink.opacity(0.45))
             }
             if note.favorite {
                 Image(systemName: "star.fill")
-                    .font(.system(size: 8))
+                    .font(.icon(8))
                     .foregroundStyle(Color(hex: 0xB8860B).opacity(0.85))
             }
             Text(TimeLabel.card(note.createdAt))
-                .font(.ui(11))
+                .font(.ui(T.metaSize))
                 .foregroundStyle(note.paper.ink.opacity(0.45))
         }
         .padding(.horizontal, 14)
@@ -376,20 +377,14 @@ struct NoteCard: View {
         HStack(spacing: 6) {
             // 类型一眼认出：文字 / 清单 / 图片 / 锁定。v8 富卡片。
             Image(systemName: typeSymbol)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.icon(10, .semibold))
                 .foregroundStyle(note.paper.ink.opacity(0.55))
             if !note.tag.isEmpty {
                 HStack(spacing: 4) {
                     Circle().fill(note.paper.ink.opacity(0.28)).frame(width: 4, height: 4)
-                    Text(note.tag).font(.ui(10.5, .medium))
+                    Text(note.tag).font(.ui(T.captionSize, .medium))
                 }
                 .foregroundStyle(note.paper.ink.opacity(0.55))
-            }
-            if note.isPinned && compact {
-                // 墙上置顶用图钉（0.3.1）；紧凑行没有图钉，▲ 是唯一的置顶信号。
-                Image(systemName: "arrowtriangle.up.fill")
-                    .font(.system(size: 7))
-                    .foregroundStyle(note.paper.ink.opacity(0.45))
             }
             Spacer(minLength: 0)
         }
@@ -419,7 +414,7 @@ struct NoteCard: View {
                         )
                 }
                 if !note.text.isEmpty {
-                    NoteBody(note: note, onToggleCheck: onToggleCheck)
+                    NoteBody(note: note, fontScale: fontScale, onToggleCheck: onToggleCheck)
                 }
             }
         }
@@ -432,8 +427,8 @@ struct NoteCard: View {
                 .foregroundStyle(note.paper.ink.opacity(0.55))
                 .blur(radius: 3.2)
             HStack(spacing: 5) {
-                Image(systemName: "lock.fill").font(.system(size: 9))
-                Text("已锁定 · 点击解锁").font(.ui(11.5, .medium))
+                Image(systemName: "lock.fill").font(.icon(9))
+                Text("已锁定 · 点击解锁").font(.ui(T.auxSize, .medium))
             }
             .foregroundStyle(note.paper.ink.opacity(hovering ? 0.85 : 0.6))
             .padding(.vertical, 4)
@@ -447,14 +442,14 @@ struct NoteCard: View {
     private var foot: some View {
         HStack(spacing: 8) {
             Text(TimeLabel.card(note.createdAt))
-                .font(.ui(10.5))
+                .font(.ui(T.captionSize))
                 .foregroundStyle(note.paper.ink.opacity(0.34))
                 .help(TimeLabel.full(note.createdAt))
             Spacer(minLength: 0)
             if showCheckCount, note.isChecklist {
                 let p = note.checklistProgress
                 Text("\(p.done)/\(p.total)")
-                    .font(.ui(10.5))
+                    .font(.ui(T.captionSize))
                     .foregroundStyle(note.paper.ink.opacity(0.34))
             }
         }
@@ -466,7 +461,7 @@ struct NoteCard: View {
         HStack(spacing: 8) {
             if note.favorite {
                 Image(systemName: "star.fill")
-                    .font(.system(size: 11))
+                    .font(.icon(11))
                     .foregroundStyle(Color(hex: 0xB8860B).opacity(0.9))
             }
             if hovering && !note.isLocked { menuButton }
@@ -491,7 +486,7 @@ struct NoteCard: View {
 
     private var menuLabel: some View {
         Image(systemName: "ellipsis")
-            .font(.system(size: 11, weight: .semibold))
+            .font(.icon(11, .semibold))
             .foregroundStyle(note.paper.ink.opacity(0.58))
             .frame(width: 22, height: 22)
             .background(Circle().fill(note.paper.ink.opacity(0.085)))
