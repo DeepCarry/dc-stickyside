@@ -65,6 +65,8 @@ struct Archive: Codable {
     var sidebarMode: SidebarMode? = nil
     var viewMode: ViewMode? = nil
     var neatMode: Bool? = nil
+    // 0.3.5：字号缩放倍率（0.85–1.30）。Optional，见上面注释。
+    var fontScale: Double? = nil
 }
 
 // MARK: - Store
@@ -122,6 +124,31 @@ final class AppStore: ObservableObject {
     @Published var viewMode: ViewMode = .grid { didSet { scheduleSave() } }
     /// 整齐模式：关掉卡片的旋转、胶带与折角。设置里可开。
     @Published var neatMode: Bool = true { didSet { scheduleSave() } }
+    /// 字号缩放倍率（0.85–1.30，默认 1.0）。设置「外观」组可调，⌘+/⌘- 微调。
+    /// 唯一写入口：didSet 同步 FontScale.current 并落盘。
+    @Published var fontScale: CGFloat = 1.0 {
+        didSet {
+            FontScale.current = fontScale
+            scheduleSave()
+        }
+    }
+
+    /// 当前倍率最接近的预设（取距离最近的一档；误差 ≤0.02 时即为该档）。
+    var fontPreset: FontSizePreset {
+        FontSizePreset.closest(to: fontScale)
+    }
+
+    /// ⌘+/⌘- 微调：0.05 一档，0.85–1.30，到顶/到底给提示不再动。
+    /// *20 取整消浮点漂移；百分比先 round 再取整，1.15 不会显示成 114%。
+    func bumpFontScale(by delta: CGFloat) {
+        let next = (min(max(fontScale + delta, 0.85), 1.30) * 20).rounded() / 20
+        if next == fontScale {
+            ToastCenter.shared.show(delta > 0 ? "已是最大" : "已是最小")
+            return
+        }
+        fontScale = next
+        ToastCenter.shared.show("字体 \(Int((next * 100).rounded()))%")
+    }
     /// 侧栏智能视图（收藏 / 最近 / 桌面便签）。会话态，不存盘——
     /// 和 selectedWallID / searchText 一样，重启回到全部。
     @Published var smartView: SmartView? = nil
@@ -168,6 +195,18 @@ final class AppStore: ObservableObject {
         if inMemory { didSeed = true; return }
         Paths.ensure()
         load()
+        // 密钥出过问题（P0-6）：损坏重建 / 写失败都要明说，旧锁定便签打不开是有原因的。
+        // 只报一次：消费完清掉旗子，免得预览/重建时重复弹。
+        if Vault.keyRegenerated {
+            Vault.keyRegenerated = false
+            keyStale = true
+            ToastCenter.shared.show("密钥文件已损坏，已生成新密钥，旧锁定便签无法打开", seconds: 6)
+        }
+        if Vault.keyWriteFailed {
+            Vault.keyWriteFailed = false
+            keyStale = true
+            ToastCenter.shared.show("密钥无法写入，锁定功能已暂停", seconds: 6)
+        }
         migrateLegacyLocks()  // 旧版本只有「锁」的 UI，正文还是明文：这里补成真加密
         purgeExpiredTrash()   // 回收站只留 30 天（PRD AC-8），清理连图片一起删
     }
@@ -236,6 +275,8 @@ final class AppStore: ObservableObject {
             sidebarMode = a.sidebarMode ?? .expanded
             viewMode = a.viewMode ?? .grid
             neatMode = a.neatMode ?? true
+            fontScale = a.fontScale.map(CGFloat.init) ?? 1.0
+            FontScale.current = fontScale
             if let f = a.captureFrame, f.count == 4 {
                 captureFrame = CGRect(x: f[0], y: f[1], width: f[2], height: f[3])
             }
@@ -287,6 +328,7 @@ final class AppStore: ObservableObject {
         a.sidebarMode = sidebarMode
         a.viewMode = viewMode
         a.neatMode = neatMode
+        a.fontScale = Double(fontScale)
         if let f = captureFrame {
             a.captureFrame = [Double(f.origin.x), Double(f.origin.y),
                               Double(f.size.width), Double(f.size.height)]
@@ -574,14 +616,19 @@ final class AppStore: ObservableObject {
     // MARK: 锁定 / 解锁（PRD §2.8）
 
     func canLock(_ note: Note) -> Bool {
-        !note.isLocked && note.hasContent && authenticator.kind.available
+        // 密钥写失败时本次运行没有可用的 durable 钥匙：不许新锁，免得内容
+        // 被加密进一个谁也打不开的状态（P0-6）。
+        guard !Vault.keyWriteFailed else { return false }
+        return !note.isLocked && note.hasContent && authenticator.kind.available
     }
 
     /// 锁定是「安全方向」，不需要验身份。但解锁方式不可用时不允许锁：
     /// 否则内容会被加密进一个谁也打不开的状态，那叫数据丢失，不叫安全。
     @discardableResult
     func lock(_ id: UUID) -> Bool {
-        guard authenticator.kind.available,
+        // 同 canLock：没有 durable 钥匙时不许新锁（否则 migrateLegacyLocks 会把
+        // 旧明文锁进一把重启就消失的临时钥匙里）。
+        guard !Vault.keyWriteFailed, authenticator.kind.available,
               let i = notes.firstIndex(where: { $0.id == id }) else { return false }
         return sealNote(at: i, force: false)
     }

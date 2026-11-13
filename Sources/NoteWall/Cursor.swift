@@ -514,18 +514,6 @@ final class HandCursorRegistry {
         return r
     }
 
-    /// 光标离开可点击区域后，落在输入框上应保持 I 形，其余回到箭头。
-    private func cursorBelow(_ p: NSPoint, in win: NSWindow) -> NSCursor {
-        guard let root = win.contentView else { return .arrow }
-        var v = root.hitTest(win.convertPoint(fromScreen: p))
-        while let cur = v {
-            if let tv = cur as? NSTextView, tv.isEditable { return .iBeam }
-            if let tf = cur as? NSTextField, tf.isEditable { return .iBeam }
-            v = cur.superview
-        }
-        return .arrow
-    }
-
     /// 诊断用：某个屏幕点为什么命中 / 没命中。断言失败时把原因打出来，
     /// 否则「实得箭头」这一句什么线索都没有。
     func debugDescribe(_ p: NSPoint) -> String {
