@@ -32,6 +32,12 @@ import AppKit
 // 编辑器，清单默认打勾、经头部「编辑」切原始文本编辑。编辑机制全套复用边缘面板
 // 范式：PlainTextEditor（保中文输入法组合）+ 草稿 250ms 防抖写回 + allowKey 临时
 // 转 key 面板 + 编辑会话中不悬停收起、点外 / Esc 保存收起。
+//
+// v0.2.5 多屏修复：auxiliaryTop*Area 返回的是屏幕本地坐标（原点在该屏左下角），
+// 此前直接当全局坐标用——单屏时本地恰好等于全局，所以一直没暴露；接上外接屏、
+// 内置屏不在全局原点后，面板整体错位一屏（跑到外接屏顶部，真刘海处毫无反应）。
+// geometry(for:) 现统一换算为全局坐标；并监听显示配置变化（插拔 / 排列 / 合盖）重定位。
+
 
 
 
@@ -40,8 +46,8 @@ import AppKit
 
 /// 物理刘海在屏幕坐标系中的水平范围（全局坐标，原点在主屏左下）
 struct NotchGeometry {
-    var leftX: CGFloat      // 刘海左边界
-    var rightX: CGFloat     // 刘海右边界
+    var leftX: CGFloat      // 刘海左边界（全局坐标，面板 frame 直接用）
+    var rightX: CGFloat     // 刘海右边界（全局坐标）
     var height: CGFloat     // 刘海高度（= 顶部安全区）
 
     var width: CGFloat { max(0, rightX - leftX) }
@@ -124,7 +130,10 @@ enum NotchMetrics {
         let h = max(screen.safeAreaInsets.top, 26)
         // auxiliaryTopLeftArea / RightArea 是刘海两侧可用的菜单栏区域
         if let l = screen.auxiliaryTopLeftArea, let r = screen.auxiliaryTopRightArea, r.minX > l.maxX {
-            return NotchGeometry(leftX: l.maxX, rightX: r.minX, height: h)
+            // auxiliary 区域是屏幕本地坐标，面板 frame 是全局坐标，必须加该屏的全局偏移。
+            // 单屏时偏移为 0 所以旧写法看不出问题；多屏时不加就会错位一整屏（0.2.5 实测 bug）。
+            let originX = screen.frame.minX
+            return NotchGeometry(leftX: originX + l.maxX, rightX: originX + r.minX, height: h)
         }
         // 兜底：按常见宽度估算
         let w: CGFloat = 185
@@ -343,17 +352,39 @@ final class NotchController {
     private var outsideMonitor: Any?
     private var escMonitor: Any?
     private var isFlushing = false
+    private var screenObserver: NSObjectProtocol?
     private let model = NotchModel()
     private weak var store: AppStore?
     private(set) var isExpanded = false
 
+    /// 找当前带刘海的屏幕与其几何。逐屏问 geometry，不能只认第一块屏——
+    /// 外接屏没有刘海、也不会有刘海坐标，认错屏面板就长到别的屏上去了。
+    private static func resolveNotchScreen() -> (screen: NSScreen, geometry: NotchGeometry)? {
+        for s in NSScreen.screens {
+            if let g = NotchMetrics.geometry(for: s) { return (s, g) }
+        }
+        return nil
+    }
+
     func install(store: AppStore) {
+        self.store = store
+        // 显示配置会变（插拔外接屏 / 改排列 / 合盖再开）：监听一次，变化时重定位；
+        // 启动时没有刘海屏（合盖外接）也不放弃，屏出现后由监听补装。
+        if screenObserver == nil {
+            screenObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didChangeScreenParametersNotification,
+                object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.screenParametersChanged() }
+                }
+        }
+        installPanelIfPossible()
+    }
+
+    private func installPanelIfPossible() {
         guard panel == nil,
-              let s = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }),
-              let g = NotchMetrics.geometry(for: s) else { return }
+              let (s, g) = Self.resolveNotchScreen() else { return }
         screen = s
         geometry = g
-        self.store = store
         model.notchWidth = g.width
         model.notchHeight = g.height
         model.cardWidth = g.cardWidth(screenWidth: s.frame.width)
@@ -454,6 +485,28 @@ final class NotchController {
         p.setFrame(frame(expanded: false), display: false)
         panel = p
         p.orderFrontRegardless()
+    }
+
+    /// 显示配置变化时重定位：刘海屏可能换位、消失（合盖）或出现（开盖 / 插屏）。
+    private func screenParametersChanged() {
+        if panel == nil {
+            installPanelIfPossible()
+            return
+        }
+        guard let (s, g) = Self.resolveNotchScreen() else {
+            collapseNow()
+            panel?.orderOut(nil)
+            screen = nil
+            geometry = nil
+            return
+        }
+        screen = s
+        geometry = g
+        model.notchWidth = g.width
+        model.notchHeight = g.height
+        model.cardWidth = g.cardWidth(screenWidth: s.frame.width)
+        if panel?.isVisible == false { panel?.orderFrontRegardless() }
+        apply(isExpanded)
     }
 
     // MARK: 悬停
