@@ -26,6 +26,13 @@ import AppKit
 // （编辑不设按钮——点行本身就是打开这条）；点行在面板内切到详情页（正文全显、
 // 清单可打勾、底部复制 / 在墙中打开 / 删除），深度编辑经 AppContext 旗子跳墙内
 // 现成的 NoteDetailSheet。顺带修 0.2.2 两处：行背景未拉满卡宽、清单行首标记未剥净。
+//
+// v0.2.4 详情纸色化 + 可编辑（Carry 验收 0.2.3 后定案）：详情页就是便签本体，
+// 整页铺纸色、文字墨色（列表仍是黑色容器）；详情内可直接编辑——普通便签打开即
+// 编辑器，清单默认打勾、经头部「编辑」切原始文本编辑。编辑机制全套复用边缘面板
+// 范式：PlainTextEditor（保中文输入法组合）+ 草稿 250ms 防抖写回 + allowKey 临时
+// 转 key 面板 + 编辑会话中不悬停收起、点外 / Esc 保存收起。
+
 
 
 
@@ -281,6 +288,11 @@ final class NotchModel: ObservableObject {
     var onTogglePinNote: ((Note) -> Void)?
     var onToggleCheck: ((Note, Int) -> Void)?
     var onOpenInWall: ((Note) -> Void)?
+    @Published var draft: String = ""
+    @Published var isEditingText = false
+    @Published var flashSaved = false
+    var onDraftChanged: ((String) -> Void)?
+    var onToggleEditing: ((Note) -> Void)?
 }
 
 final class NotchPanel: NSPanel {
@@ -296,7 +308,10 @@ final class NotchPanel: NSPanel {
         isMovableByWindowBackground = false
         hidesOnDeactivate = false
     }
-    override var canBecomeKey: Bool { false }
+    /// 详情编辑期间临时允许成为 key 窗口（同 EdgePanel.allowKey 的范式）；
+    /// 平时恒 false——刘海面板不抢键盘，是收起态零打扰的前提。
+    var allowKey = false
+    override var canBecomeKey: Bool { allowKey }
     override var canBecomeMain: Bool { false }
 }
 
@@ -324,6 +339,10 @@ final class NotchController {
     private var screen: NSScreen?
     private var geometry: NotchGeometry?
     private var collapseWork: DispatchWorkItem?
+    private var saveWork: DispatchWorkItem?
+    private var outsideMonitor: Any?
+    private var escMonitor: Any?
+    private var isFlushing = false
     private let model = NotchModel()
     private weak var store: AppStore?
     private(set) var isExpanded = false
@@ -347,15 +366,38 @@ final class NotchController {
             self?.collapseNow()
             AppDelegate.bringWallToFront()
         }
+        model.onDraftChanged = { [weak self] text in self?.editChanged(text) }
+        model.onToggleEditing = { [weak self] note in
+            guard let self else { return }
+            if self.model.isEditingText {
+                self.flushSave()
+                self.model.isEditingText = false
+                self.syncDetail()
+            } else {
+                // 进文本编辑前把草稿对齐最新正文（期间可能刚打过勾）
+                self.model.draft = self.store?.notes.first(where: { $0.id == note.id })?.text ?? note.text
+                self.model.isEditingText = true
+            }
+            self.updateSessionMonitors()
+        }
         model.onOpenNote = { [weak self] note in
             guard let self else { return }
             // 用 store 里的最新副本（列表只是快照，可能已旧）
-            self.model.detailNote = self.store?.notes.first(where: { $0.id == note.id }) ?? note
+            let fresh = self.store?.notes.first(where: { $0.id == note.id }) ?? note
+            self.model.detailNote = fresh
+            self.model.draft = fresh.text
+            self.model.isEditingText = false
+            self.panel?.allowKey = true
             self.apply(true)
+            self.updateSessionMonitors()
         }
         model.onCloseDetail = { [weak self] in
             guard let self else { return }
+            self.flushSave()
             self.model.detailNote = nil
+            self.model.isEditingText = false
+            self.panel?.allowKey = false
+            self.stopSessionMonitors()
             self.apply(true)
         }
         model.onCopyNote = { note in NoteCopy.copy(note) }
@@ -373,20 +415,30 @@ final class NotchController {
         model.onToggleCheck = { [weak self] note, itemID in
             guard let self else { return }
             self.store?.toggleCheck(noteID: note.id, itemID: itemID)
-            // 详情页拿的是副本：勾选后把最新状态同步回去（高度不变，不必重排 frame）
-            if let fresh = self.store?.notes.first(where: { $0.id == note.id }),
-               self.model.detailNote != fresh {
-                self.model.detailNote = fresh
-            }
-            self.refreshNotes()
+            self.syncDetail()
         }
         model.onOpenInWall = { [weak self] note in
+            self?.flushSave()
             // 与菜单栏「设置…」同一套旗子 + 通知机制：窗口在就直接弹，
             // 窗口是刚重建的就靠 WallView 的 onAppear 消费旗子
             AppContext.shared.pendingDetailNoteID = note.id
             NotificationCenter.default.post(name: .noteWallOpenDetail, object: nil)
             self?.collapseNow()
             AppDelegate.bringWallToFront()
+        }
+        model.onDraftChanged = { [weak self] text in self?.editChanged(text) }
+        model.onToggleEditing = { [weak self] note in
+            guard let self else { return }
+            if self.model.isEditingText {
+                self.flushSave()
+                self.model.isEditingText = false
+                self.syncDetail()
+            } else {
+                // 进文本编辑前把草稿对齐最新正文（期间可能刚打过勾）
+                self.model.draft = self.store?.notes.first(where: { $0.id == note.id })?.text ?? note.text
+                self.model.isEditingText = true
+            }
+            self.updateSessionMonitors()
         }
 
         let container = NotchTrackingContainer()
@@ -418,7 +470,95 @@ final class NotchController {
         model.notes = NotchNotes.top(store?.notes ?? [])
     }
 
+    /// 详情页拿的是副本：把 store 里的最新状态同步回去，并刷新列表快照
+    private func syncDetail() {
+        guard let id = model.detailNote?.id,
+              let fresh = store?.notes.first(where: { $0.id == id }) else { return }
+        if model.detailNote != fresh { model.detailNote = fresh }
+        refreshNotes()
+    }
+
+    /// 编辑会话判定：详情打开且正文编辑器在场（普通便签恒在场；清单只在文本编辑时在场）。
+    /// 会话中鼠标移开不收起，收起走点外 / Esc / 返回——与边缘抽出面板同一套行为。
+    private var editSessionActive: Bool {
+        guard let detail = model.detailNote else { return false }
+        return model.isEditingText || !detail.isChecklist
+    }
+
+    /// 与边缘面板同一套草稿保存：记「停手」不记「击键」，250ms 防抖
+    private func editChanged(_ text: String) {
+        model.draft = text
+        saveWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.flushSave() }
+        saveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+    }
+
+    /// 写回前的最后一道闸（同边缘面板）：便签可能已被锁定 / 删除，绝不能把明文写进密文便签
+    private func flushSave() {
+        guard !isFlushing else { return }
+        isFlushing = true
+        defer { isFlushing = false }
+        saveWork?.cancel()
+        saveWork = nil
+        guard let detail = model.detailNote, let store else { return }
+        guard let note = store.notes.first(where: { $0.id == detail.id }),
+              !note.isLocked, note.deletedAt == nil else {
+            NSLog("NoteWall: 刘海详情写回时发现便签已锁定/删除，放弃草稿")
+            collapseNow()
+            return
+        }
+        guard model.draft != note.text else { return }
+        var updated = note
+        updated.text = model.draft
+        store.update(updated)
+        model.flashSaved = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            self?.model.flashSaved = false
+        }
+    }
+
+    /// 会话监听（仅编辑会话期间，同边缘面板 startMonitors）：点外 = 写回收起；Esc 分层处理
+    private func updateSessionMonitors() {
+        if editSessionActive {
+            guard outsideMonitor == nil else { return }
+            outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.flushSave()
+                    self?.collapseNow()
+                }
+            }
+            escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard event.keyCode == 53 else { return event }   // Esc
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if self.model.isEditingText {
+                        self.flushSave()
+                        self.model.isEditingText = false
+                        self.syncDetail()
+                        self.updateSessionMonitors()
+                    } else {
+                        self.flushSave()
+                        self.collapseNow()
+                    }
+                }
+                return nil
+            }
+        } else {
+            stopSessionMonitors()
+        }
+    }
+
+    private func stopSessionMonitors() {
+        if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
+        if let escMonitor { NSEvent.removeMonitor(escMonitor) }
+        outsideMonitor = nil
+        escMonitor = nil
+    }
+
     func hoverExit() {
+        // 编辑会话中鼠标移开不收起（同边缘抽出面板）
+        if editSessionActive { return }
         collapseWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.apply(false) }
         collapseWork = work
@@ -445,7 +585,13 @@ final class NotchController {
 
     private func apply(_ expanded: Bool) {
         isExpanded = expanded
-        if !expanded { model.detailNote = nil }
+        if !expanded {
+            flushSave()
+            model.detailNote = nil
+            model.isEditingText = false
+            panel?.allowKey = false
+            stopSessionMonitors()
+        }
         model.isExpanded = expanded
         guard let p = panel else { return }
         NSAnimationContext.runAnimationGroup { ctx in
@@ -683,7 +829,7 @@ struct NotchNoteRow: View {
                 t = String(t.dropFirst(bullet.count)).trimmingCharacters(in: .whitespaces)
                 break
             }
-            for mark in ["[ ] ", "[x] ", "[X] ", "[✓] ", "✓ ", "☑ ", "☐ ", "· "] where t.hasPrefix(mark) {
+            for mark in ["[] ", "[ ] ", "[x] ", "[X] ", "[✓] ", "✓ ", "☑ ", "☐ ", "· "] where t.hasPrefix(mark) {
                 t = String(t.dropFirst(mark.count)).trimmingCharacters(in: .whitespaces)
                 break
             }
@@ -713,81 +859,140 @@ struct NotchNoteRow: View {
 
 // MARK: - 刘海内详情页
 
-/// 点列表行后在面板内打开的单条详情：看全 + 勾清单 + 复制是这个场景的高频动作；
-/// 深度编辑（换纸色 / 改标签 / 贴图）不在这里做，经「在便签墙中打开」跳墙内详情页。
+/// 点列表行后在面板内打开的单条详情。详情页就是便签本体：整页铺纸色、文字墨色，
+/// 与便签墙 / 边缘面板里的便签长一个样（列表是黑色容器，详情不是）。
+/// 普通便签打开即编辑器；清单默认打勾模式，经头部「编辑」切原始文本编辑。
+/// 编辑机制全套复用边缘面板范式（PlainTextEditor + 草稿防抖写回，会话行为在控制器）。
 struct NotchNoteDetailView: View {
     let note: Note
-    var model: NotchModel
+    @ObservedObject var model: NotchModel
     @State private var copied = false
+
+    private var ink: Color { note.paper.ink }
+    private var inkSoft: Color { note.paper.inkSoft }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Button { model.onCloseDetail?() } label: {
-                    HStack(spacing: 2) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("返回")
+            header
+            hairline
+            content
+            hairline
+            actionBar
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background { NotchCardShape().fill(note.paper.paper) }
+    }
+
+    // MARK: 顶栏
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Button { model.onCloseDetail?() } label: {
+                HStack(spacing: 2) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("返回")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(ink.opacity(0.85))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(ink.opacity(0.08))
+                )
+            }
+            .buttonStyle(.plain).handCursor()
+            Spacer(minLength: 0)
+            if model.flashSaved {
+                Text("已保存")
+                    .font(.system(size: 11))
+                    .foregroundStyle(inkSoft)
+            }
+            if note.isChecklist {
+                Button { model.onToggleEditing?(note) } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: model.isEditingText ? "checkmark" : "pencil")
+                            .font(.system(size: 10.5, weight: .semibold))
+                        Text(model.isEditingText ? "完成" : "编辑")
                             .font(.system(size: 12, weight: .medium))
                     }
-                    .foregroundStyle(Color.white.opacity(0.85))
+                    .foregroundStyle(ink.opacity(0.85))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(
                         RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(Color.white.opacity(0.10))
+                            .fill(ink.opacity(0.08))
                     )
                 }
                 .buttonStyle(.plain).handCursor()
-                Spacer(minLength: 0)
-                Circle().fill(note.paper.paper).frame(width: 9, height: 9)
-                Text(meta)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color.white.opacity(0.45))
-                    .lineLimit(1)
             }
-            .padding(.horizontal, 12)
-            .frame(height: 38)
+            Text(meta)
+                .font(.system(size: 11))
+                .foregroundStyle(inkSoft)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 38)
+    }
 
-            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 0.5)
+    private var hairline: some View {
+        Rectangle().fill(ink.opacity(0.10)).frame(height: 0.5)
+    }
 
+    // MARK: 正文
+
+    @ViewBuilder
+    private var content: some View {
+        if model.isEditingText || !note.isChecklist {
+            editorBody
+        } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    if let img = note.image, let ns = ImageStore.load(img.fileName, thumb: false) {
-                        Image(nsImage: ns)
-                            .resizable()
-                            .scaledToFit()
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    }
-                    if note.isChecklist {
-                        ForEach(Checklist.parse(note.text)) { item in
-                            checkRow(item)
-                        }
-                    } else if !note.text.isEmpty {
-                        Text(note.text)
-                            .font(.system(size: 13.5))
-                            .foregroundStyle(Color.white.opacity(0.92))
-                            .textSelection(.enabled)
+                    headerImage
+                    ForEach(Checklist.parse(note.text)) { item in
+                        checkRow(item)
                     }
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxHeight: .infinity)
-
-            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 0.5)
-
-            HStack(spacing: 8) {
-                actionButton(copied ? "checkmark" : "doc.on.doc",
-                             label: copied ? "已复制" : "复制") { copyTapped() }
-                actionButton("rectangle.stack", label: "在便签墙打开") { model.onOpenInWall?(note) }
-                Spacer(minLength: 0)
-                actionButton("trash", label: "删除") { model.onDeleteNote?(note) }
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 42)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    /// 文本编辑：自托管编辑器（同边缘面板），正文由它托管、草稿经 onChange 防抖写回；
+    /// 用 SwiftUI TextEditor 会在中文输入法组合期间被写回打断拼音。
+    private var editorBody: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            headerImage
+            PlainTextEditor(text: $model.draft, fontSize: 14.5, ink: ink,
+                            focusOnAppear: true)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .onChange(of: model.draft) { _, newValue in
+                    model.onDraftChanged?(newValue)
+                }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, note.image == nil ? 12 : 0)
+        .padding(.bottom, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private var headerImage: some View {
+        if let img = note.image, let ns = ImageStore.load(img.fileName, thumb: false) {
+            Image(nsImage: ns)
+                .resizable()
+                .scaledToFit()
+                .frame(maxHeight: 170)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(ink.opacity(0.10), lineWidth: 1)
+                )
+                .padding(.top, 12)
+        }
     }
 
     private func checkRow(_ item: Checklist.Item) -> some View {
@@ -795,17 +1000,31 @@ struct NotchNoteDetailView: View {
             HStack(spacing: 8) {
                 Image(systemName: item.done ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 15))
-                    .foregroundStyle(item.done ? Color.green : Color.white.opacity(0.4))
+                    .foregroundStyle(item.done ? ink : ink.opacity(0.35))
                 Text(item.text)
                     .font(.system(size: 13.5))
-                    .foregroundStyle(Color.white.opacity(item.done ? 0.45 : 0.92))
-                    .strikethrough(item.done, color: Color.white.opacity(0.4))
+                    .foregroundStyle(item.done ? inkSoft : ink)
+                    .strikethrough(item.done, color: inkSoft)
                     .multilineTextAlignment(.leading)
                 Spacer(minLength: 0)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain).handCursor()
+    }
+
+    // MARK: 底部操作条
+
+    private var actionBar: some View {
+        HStack(spacing: 8) {
+            actionButton(copied ? "checkmark" : "doc.on.doc",
+                         label: copied ? "已复制" : "复制") { copyTapped() }
+            actionButton("rectangle.stack", label: "在便签墙打开") { model.onOpenInWall?(note) }
+            Spacer(minLength: 0)
+            actionButton("trash", label: "删除") { model.onDeleteNote?(note) }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 42)
     }
 
     private func actionButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
@@ -816,12 +1035,12 @@ struct NotchNoteDetailView: View {
                 Text(label)
                     .font(.system(size: 12, weight: .medium))
             }
-            .foregroundStyle(Color.white.opacity(0.9))
+            .foregroundStyle(ink.opacity(0.9))
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.white.opacity(0.10))
+                    .fill(ink.opacity(0.08))
             )
         }
         .buttonStyle(.plain).handCursor()
