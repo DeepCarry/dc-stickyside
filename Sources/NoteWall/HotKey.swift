@@ -220,6 +220,8 @@ final class HotKeyCenter {
     private var handler: EventHandlerRef?
     /// 最近一次完全生效的配置。改键失败时用它回滚。
     private(set) var active: HotkeyConfig = .standard
+    /// 最近一次 apply 失败的位（可能两个都失败）。成功时清空；供设置页展示。
+    private(set) var failedSlots: [HotkeySlot] = []
 
     private let signature: OSType = 0x4E57544C  // 'NWTL'
 
@@ -247,7 +249,9 @@ final class HotKeyCenter {
     /// - `strict = true`（用户在设置里改键）：任何一个注册失败就整体回滚到改动前——
     ///   不能出现「换了一半」的状态，那比不换还难排查。
     /// - `strict = false`（启动时）：尽力而为，能注册几个算几个，失败的位返回给调用方去提示。
-    /// 返回 nil = 全部成功；否则是注册失败的那个位。
+    /// 返回 nil = 全部成功；否则是注册失败的第一位。全部失败位另记在
+    /// `failedSlots` 里，供调用方逐位提示（P0-7）。签名保持原样，是因为
+    /// main.swift 超 128KB 推不上去，它的 --hotkeys 自检只能认旧签名。
     @discardableResult
     func apply(_ config: HotkeyConfig, strict: Bool = true) -> HotkeySlot? {
         let previous = active
@@ -256,9 +260,13 @@ final class HotKeyCenter {
         let okWall = register(config.openWall, id: 2) { [weak self] in self?.onOpenWall?() }
         if okNew && okWall {
             active = config
+            failedSlots = []
             return nil
         }
-        let failed: HotkeySlot = okNew ? .openWall : .newNote
+        var failed: [HotkeySlot] = []
+        if !okNew { failed.append(.newNote) }
+        if !okWall { failed.append(.openWall) }
+        failedSlots = failed
         if strict {
             unregisterAll()
             _ = register(previous.newNote, id: 1) { [weak self] in self?.onNewNote?() }
@@ -266,7 +274,7 @@ final class HotKeyCenter {
         } else {
             active = config
         }
-        return failed
+        return failed.first
     }
 
     /// 这个组合当前是否真的注册着（供测试断言回滚结果，不猜 Carbon 的行为）

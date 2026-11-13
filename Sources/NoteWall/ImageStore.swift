@@ -24,7 +24,13 @@ enum ImageStore {
 
         do {
             try main.data.write(to: Paths.images.appendingPathComponent(mainName), options: .atomic)
-            try thumb.data.write(to: Paths.thumbs.appendingPathComponent(thumbName), options: .atomic)
+            do {
+                try thumb.data.write(to: Paths.thumbs.appendingPathComponent(thumbName), options: .atomic)
+            } catch {
+                // 缩略图没写成：已落盘的主图是孤儿，删掉再报失败（P1-16）。
+                try? FileManager.default.removeItem(at: Paths.images.appendingPathComponent(mainName))
+                throw error
+            }
         } catch {
             return nil
         }
@@ -71,15 +77,34 @@ enum ImageStore {
         let scale = min(1, maxEdge / max(w, h))
         let tw = Int(round(w * scale)), th = Int(round(h * scale))
 
+        // 透明 PNG 直接压 JPEG：alpha 丢掉后透明处会变黑，先铺白底再画图（P1-17）。
+        // 带 alpha 的图即使不用缩放也要走合成；CGContext 建不出来就记日志并失败，
+        // 不再静默回落原图（回落会突破 2048 上限，黑底问题也还在）。
+        let hasAlpha: Bool = {
+            switch cg.alphaInfo {
+            case .premultipliedFirst, .premultipliedLast, .first, .last: return true
+            default: return false
+            }
+        }()
         let target: CGImage
-        if scale < 1, let ctx = CGContext(
-            data: nil, width: tw, height: th, bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
-        ) {
+        if scale < 1 || hasAlpha {
+            guard let ctx = CGContext(
+                data: nil, width: tw, height: th, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+            ) else {
+                NSLog("NoteWall: 图片编码建 CGContext 失败（\(tw)x\(th)）")
+                return nil
+            }
             ctx.interpolationQuality = .high
+            ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            ctx.fill(CGRect(x: 0, y: 0, width: tw, height: th))
             ctx.draw(cg, in: CGRect(x: 0, y: 0, width: tw, height: th))
-            target = ctx.makeImage() ?? cg
+            guard let made = ctx.makeImage() else {
+                NSLog("NoteWall: 图片编码 CGContext 出图失败")
+                return nil
+            }
+            target = made
         } else {
             target = cg
         }

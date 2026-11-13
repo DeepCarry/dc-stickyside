@@ -92,7 +92,7 @@ final class EditorPlaceholderView: NSView {
 
     private var placeholder = ""
     private var ink = NSColor.placeholderTextColor
-    private var font = NSFont.systemFont(ofSize: 15, weight: .regular)
+    private var font = AppFont.pingFang(size: 15 * FontScale.current, weight: .regular)
     private weak var textView: NSTextView?
     private var timer: Timer?
     /// 只读给自检用：`--imetest` 会验证组合输入时它确实翻成 true
@@ -101,7 +101,7 @@ final class EditorPlaceholderView: NSView {
     func configure(text: String, color: Color, fontSize: CGFloat) {
         placeholder = text
         ink = NSColor(color)
-        font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
+        font = AppFont.pingFang(size: fontSize * FontScale.current, weight: .regular)
         needsDisplay = true
         refresh()
     }
@@ -185,7 +185,7 @@ struct PlainTextEditor: NSViewRepresentable {
     let fontSize: CGFloat
     let ink: Color
     var focusOnAppear = false
-    /// 外部想让它获得焦点时 +1（比如点「＋ 新建便签」）。focusOnAppear 只管挂载那一次。
+    /// 外部想让它获得焦点时 +1（比如点「新建便签」）。focusOnAppear 只管挂载那一次。
     var focusToken: Int = 0
 
     func makeCoordinator() -> PlainTextCoordinator {
@@ -228,7 +228,7 @@ struct PlainTextEditor: NSViewRepresentable {
         tv.minSize = NSSize(width: 0, height: 0)
         tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
                             height: CGFloat.greatestFiniteMagnitude)
-        tv.font = .systemFont(ofSize: fontSize, weight: .regular)
+        tv.font = AppFont.pingFang(size: fontSize * FontScale.current, weight: .regular)
         tv.textColor = NSColor(ink)
         tv.string = text
         tv.delegate = context.coordinator
@@ -246,7 +246,7 @@ struct PlainTextEditor: NSViewRepresentable {
         let coord = context.coordinator
         coord.binding = $text
 
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
+        let font = AppFont.pingFang(size: fontSize * FontScale.current, weight: .regular)
         if tv.font != font { tv.font = font }
         let color = NSColor(ink)
         if tv.textColor != color { tv.textColor = color }
@@ -260,6 +260,13 @@ struct PlainTextEditor: NSViewRepresentable {
             }
         }
 
+        // 清空回退（P0-8）：草稿已清但 NSTextView 里还攥着旧串、且上次同步被
+        // 输入法组合态拦住时，这里直接清掉，免得下一次组字提交把旧文复活。
+        if text.isEmpty, !tv.string.isEmpty, !tv.hasMarkedText() {
+            tv.string = ""
+            coord.lastSynced = ""
+            return
+        }
         // ① 外层值没变（Toast / store / 主题等引起的重算）→ 一个字都不碰
         // ② 正在输入法组合 → 一个字都不碰
         // ③ 只有外部真的改了正文（清空草稿、解锁载入等）才同步进去

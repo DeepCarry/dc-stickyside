@@ -139,16 +139,45 @@ final class Vault {
 
     static var keyURL: URL { Paths.support.appendingPathComponent("vault.key") }
 
+    /// 密钥损坏 / 写失败时置位，由 Store 在 init 里读取并置 keyStale + 弹 Toast。
+    /// Vault 是静态方法、不能直接碰 Store（P0-6）。
+    static var keyRegenerated = false
+    static var keyWriteFailed = false
+
     private static func loadOrCreateKey() -> SymmetricKey {
         if let data = try? Data(contentsOf: keyURL), data.count == 32 {
             return SymmetricKey(data: data)
         }
         Paths.ensure()
+        // 文件在但读不出 32 字节 = 损坏：先改名备份，绝不直接覆盖；
+        // 文件不存在 = 首次启动，走原来那条路。
+        if FileManager.default.fileExists(atPath: keyURL.path) {
+            let bak = Paths.support.appendingPathComponent(
+                "vault.key.corrupt-\(Int(Date().timeIntervalSince1970))")
+            do {
+                try FileManager.default.moveItem(at: keyURL, to: bak)
+                NSLog("NoteWall: 密钥文件已损坏，已备份到 \(bak.lastPathComponent)")
+                keyRegenerated = true
+            } catch {
+                // 备份都做不了：不覆盖原文件，返回一把只放内存的临时钥匙。
+                NSLog("NoteWall: 密钥文件已损坏且无法备份：\(error.localizedDescription)")
+                keyWriteFailed = true
+                return SymmetricKey(size: .bits256)
+            }
+        }
         let key = SymmetricKey(size: .bits256)
         let raw = key.withUnsafeBytes { Data($0) }
         // 0600：只有当前用户能读；并排除出 Time Machine，密钥不跟着备份跑
         let url = keyURL
-        try? raw.write(to: url, options: .atomic)
+        do {
+            try raw.write(to: url, options: .atomic)
+        } catch {
+            // 写不进去：不静默吞掉。返回一把只放内存的临时钥匙，
+            // 本次运行的锁定功能停用，旧密文也不会被新钥匙覆盖。
+            NSLog("NoteWall: 密钥写失败：\(error.localizedDescription)")
+            keyWriteFailed = true
+            return key
+        }
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         var excl = url
         var values = URLResourceValues()

@@ -27,6 +27,10 @@ enum NoteCopy {
         }
     }
 
+    /// 锁定便签的复制提示：调用方先查 isLocked 再调 copy，文案集中在这里，
+    /// 不新增 Result 分支——main.swift 的 --copytest 断言认 `.nothing`，推不上去改不了。
+    static let lockedToast = "这张便签已锁定，不能复制"
+
     /// - Parameter text: 要复制的文字。边缘面板传当前草稿（可能还没写回 store），
     ///   其它入口传 nil，用 note.text。
     /// - Parameter pb: 目标剪贴板。默认系统剪贴板；测试传独立命名的，避免污染用户在用的。

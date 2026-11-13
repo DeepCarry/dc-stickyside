@@ -145,6 +145,10 @@ enum T {
     // 主按钮（浅色下是米黄纸配深褐字，深色下是暗金配浅金）
     static let pillBg = Color.dyn(0xEFE4C6, 0x2A2718)
     static let pillFg = Color.dyn(0x4A3A12, 0xF7EDCB)
+    /// 「新建便签」按钮：浅色沿用原来的亮金，深色改暗金底 + 浅金字，不再刺眼。
+    static let ctaBg = Color.dyn(0xFFD84D, 0x8A6D1B)
+    static let ctaEdge = Color.dyn(0xE3B800, 0xC9A227)
+    static let ctaFg = Color.dyn(0x3A2E00, 0xFFF3C4)
 
     // 便签卡片：浅色底上白纸要有一条边，阴影也要轻，否则整页发灰
     static let cardEdge   = Color.dyn(0x000000, 0xFFFFFF, lightAlpha: 0.055, darkAlpha: 0.22)
@@ -154,7 +158,9 @@ enum T {
     static let titleSize: CGFloat = 28
     static let bodySize: CGFloat = 15
     static let auxSize: CGFloat = 13
-    static let metaSize: CGFloat = 11
+    static let metaSize: CGFloat = 12.5
+    static let captionSize: CGFloat = 12
+    static let iconSizeMin: CGFloat = 9
 
     // 圆角
     static let rWindow: CGFloat = 16
@@ -188,9 +194,68 @@ extension NSColor {
     }
 }
 
+/// 全局字号缩放倍率（0.85–1.30）。与 `RenderFlags.snapshot` 同款全局可变状态，
+/// 唯一写入口是 `Store.fontScale` 的 didSet，值始终与存档一致。
+enum FontScale {
+    nonisolated(unsafe) static var current: CGFloat = 1
+}
+
+/// 苹方简（PingFang SC）AppKit 入口：Bindings / Notch 的 NSFont 全部经此拿字体。
+enum AppFont {
+    /// 首次访问时探测一次：系统自带苹方简时为 true，极少数删字体环境走系统字体回退。
+    static let isAvailable: Bool = NSFont(name: "PingFang SC", size: 12) != nil
+
+    static func pingFang(size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        let name: String
+        if weight == .bold { name = "PingFang SC Bold" }
+        else if weight == .semibold { name = "PingFang SC Semibold" }
+        else if weight == .medium { name = "PingFang SC Medium" }
+        else if weight == .light { name = "PingFang SC Light" }
+        else { name = "PingFang SC" }
+        if let f = NSFont(name: name, size: size) { return f }
+        if let f = NSFont(name: "PingFang SC", size: size) { return f }
+        return .systemFont(ofSize: size, weight: weight)
+    }
+}
+
+/// 字号三档预设。⌘+/- 微调值落在两档之间时，设置页显示最近一档，百分比显示实际值。
+enum FontSizePreset: String, Codable, CaseIterable, Identifiable {
+    case small, standard, large
+    var id: String { rawValue }
+    var scale: CGFloat {
+        switch self {
+        case .small: return 0.9
+        case .standard: return 1.0
+        case .large: return 1.15
+        }
+    }
+    var title: String {
+        switch self {
+        case .small: return "小"
+        case .standard: return "标准"
+        case .large: return "大"
+        }
+    }
+    static func closest(to scale: CGFloat) -> FontSizePreset {
+        allCases.min(by: { abs($0.scale - scale) < abs($1.scale - scale) }) ?? .standard
+    }
+}
+
 extension Font {
-    static func ui(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight)
+    /// 全 App 的文字入口：苹方简 + 全局字号缩放。`scaled: false` 只给 NoteBody/CheckRow
+    /// 这类内部已乘过 `fontScale` 的调用点用，禁止在别处传 false。
+    static func ui(_ size: CGFloat, _ weight: Font.Weight = .regular, scaled: Bool = true) -> Font {
+        let s = scaled ? size * FontScale.current : size
+        if AppFont.isAvailable {
+            return .custom("PingFang SC", size: s).weight(weight)
+        }
+        return .system(size: s, weight: weight)
+    }
+
+    /// SF Symbol 图标入口：字号下限 9pt，同样跟随全局字号缩放。
+    /// 注意：`Font.icon` 只接 SF Symbol；中文竖排文字等不要走这里。
+    static func icon(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+        .system(size: max(size, T.iconSizeMin) * FontScale.current, weight: weight)
     }
 }
 
@@ -205,7 +270,7 @@ struct PillButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.ui(12.5, .medium))
+            .font(.ui(T.auxSize, .medium))
             .foregroundStyle(fg)
             .lineLimit(1)
             .fixedSize()
@@ -224,7 +289,7 @@ struct GhostButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.ui(12.5, .medium))
+            .font(.ui(T.auxSize, .medium))
             .foregroundStyle(configuration.isPressed ? T.text : T.textDim)
             .fixedSize()
             .frame(height: height)
@@ -294,7 +359,7 @@ struct ChipLabel: View {    let text: String
             if let dot {
                 Circle().fill(dot).frame(width: 6, height: 6)
             }
-            Text(text).font(.ui(12.5, active ? .medium : .regular))
+            Text(text).font(.ui(T.auxSize, active ? .medium : .regular))
         }
         .foregroundStyle(active ? T.text : T.textDim)
         .lineLimit(1)
@@ -337,7 +402,7 @@ struct AppearancePicker: View {
                             .shadow(color: .black.opacity(0.18), radius: 4, y: 2)
                             .padding(1.5)          // 选中描边不能被裁剪吃掉
                         Text(mode.title)
-                            .font(.ui(11, current == mode ? .medium : .regular))
+                            .font(.ui(T.metaSize, current == mode ? .medium : .regular))
                             .foregroundStyle(current == mode ? T.text : T.textFaint)
                     }
                     .contentShape(Rectangle())
@@ -438,11 +503,11 @@ struct FilterChip: View {
     var body: some View {
         HStack(spacing: 5) {
             if let symbol {
-                Image(systemName: symbol).font(.system(size: 9.5, weight: .medium))
+                Image(systemName: symbol).font(.icon(9.5, .medium))
             }
-            Text(title).font(.ui(11.5, active ? .medium : .regular))
+            Text(title).font(.ui(T.auxSize, active ? .medium : .regular))
             if active {
-                Image(systemName: "xmark").font(.system(size: 7.5, weight: .bold))
+                Image(systemName: "xmark").font(.icon(7.5, .bold))
             }
         }
         .foregroundStyle(active ? T.accent : T.textDim)

@@ -50,7 +50,7 @@ enum UnlockPolicy: String, Codable, CaseIterable, Identifiable {
 
     var hint: String {
         switch self {
-        case .session:   return "本次运行期间保持解锁，退出应用时重新上锁。"
+        case .session:   return "本次运行期间保持解锁，退出应用时重新上锁。App 常驻菜单栏时，本次运行可能持续很久，期间锁定便签保持解锁。"
         case .everyTime: return "关掉详情页就立刻重新上锁，明文不在磁盘上多留一秒。"
         default:         return "解锁后 \(title)自动重新上锁，期间不重复验证。"
         }
