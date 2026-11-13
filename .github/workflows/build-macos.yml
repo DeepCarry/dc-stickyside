@@ -1,3 +1,5 @@
+# 随手贴工作流 0.3.5 版
+# 相对旧版的三处改动：① build job 加「Run in-binary selftests」（逐个跑 7 个自检 flag）；②「Read version」加版本号校验（空/非法即失败）；③ build job 加 [skip ci] 条件（与 snapshots job 同款）。其余与旧版一致。
 name: Build macOS Installer
 
 # 每次往 main 推代码就自动构建 macOS 安装包，并发布到 Releases；
@@ -16,6 +18,8 @@ permissions:
 jobs:
   build:
     runs-on: macos-15 # Apple Silicon runner，自带 Xcode / Swift 工具链
+    # 提交信息带 [skip ci] 时跳过构建（与 snapshots job 同款条件）。
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,10 +30,28 @@ jobs:
       - name: Build app (release)
         run: bash ./build.sh
 
+      - name: Run in-binary selftests
+        # main.swift 里的自检套件：每个 flag 是独立分支、跑完即 exit，
+        # 必须一个一个跑。任一失败即红——以前 CI 只构建不跑自检，
+        # 自检红了也能一路绿到发版（P1-13）。
+        run: |
+          BIN=".build/release/NoteWall"
+          for flag in --selftest --locktest --copytest --menutest --hotkeys --cursortest --imagetest; do
+            echo "=== selftest $flag ==="
+            "$BIN" "$flag"
+          done
+
       - name: Read version from build.sh
         id: ver
         run: |
           VER=$(grep -o 'CFBundleShortVersionString</key><string>[^<]*' build.sh | sed 's/.*<string>//')
+          # 版本号为空或含非数字/点字符：直接失败，别打出空标签 v（P1-18 工作流侧）。
+          case "$VER" in
+            ''|*[!0-9.]*)
+              echo "版本号异常: '$VER'" >&2
+              exit 1
+              ;;
+          esac
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "Packaging version: $VER"
 
