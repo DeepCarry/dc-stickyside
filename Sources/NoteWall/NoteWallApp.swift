@@ -40,7 +40,21 @@ struct NoteWallApp: App {
                 .background(T.bg)
                 .background(WindowHooks())
         }
-        .windowStyle(.hiddenTitleBar)
+        // v8：系统标题栏（居中显示当前视图名，产品名不在标题栏）。
+        // 折叠按钮放在标题栏左侧：macOS 标准侧边栏图标，Muse/ChatGPT/Obsidian 用的就是它。
+        .windowStyle(.titleBar)
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    store.sidebarMode = store.sidebarMode.next()
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 13))
+                }
+                .help("折叠侧边栏 (⌘B)")
+                .keyboardShortcut("b", modifiers: .command)
+            }
+        }
         .defaultSize(width: 1180, height: 820)
         .commands {
             CommandGroup(replacing: .newItem) {}

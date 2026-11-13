@@ -333,8 +333,8 @@ struct SettingsSheet: View {
     private var appearanceHint: String {
         switch store.appearance {
         case .system: return "跟随 macOS 的浅色/深色设置，系统切换时立刻同步。"
-        case .light:  return "固定浅色。顶栏是米灰，便签区是纯白，便签靠一圈细边和淡投影压住。"
-        case .dark:   return "固定深色。画布不是纯黑，顶栏比画布亮一档，便签才浮得起来。"
+        case .light:  return "固定浅色。侧栏是米白，主区是纯白，便签靠一圈细边和淡投影压住。"
+        case .dark:   return "固定深色。侧栏 #171717、主区 #212121，比纯黑亮一档，便签才浮得起来。"
         }
     }
 
@@ -403,6 +403,14 @@ struct SettingsSheet: View {
                                 FakeSwitch(on: store.checkCountVisible)
                             } else {
                                 Toggle("", isOn: store.bind(\.checkCountVisible))
+                                    .toggleStyle(.switch).labelsHidden().handCursor()
+                            }
+                        }
+                        row("整齐模式", subtitle: "关掉卡片的旋转、胶带与折角，墙面横平竖直") {
+                            if RenderFlags.snapshot {
+                                FakeSwitch(on: store.neatMode)
+                            } else {
+                                Toggle("", isOn: store.bind(\.neatMode))
                                     .toggleStyle(.switch).labelsHidden().handCursor()
                             }
                         }
