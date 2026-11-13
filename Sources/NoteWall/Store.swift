@@ -275,7 +275,7 @@ final class AppStore: ObservableObject {
             sidebarMode = a.sidebarMode ?? .expanded
             viewMode = a.viewMode ?? .grid
             neatMode = a.neatMode ?? true
-            fontScale = a.fontScale.map(CGFloat.init) ?? 1.0
+            fontScale = a.fontScale.map { CGFloat($0) } ?? 1.0
             FontScale.current = fontScale
             if let f = a.captureFrame, f.count == 4 {
                 captureFrame = CGRect(x: f[0], y: f[1], width: f[2], height: f[3])
