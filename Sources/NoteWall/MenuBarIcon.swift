@@ -83,11 +83,14 @@ enum MenuBarIcon {
     }
 
     /// 设计稿模板图：18pt 的 1x / 2x 两档位图，Bundle 里齐全才用
+    /// 位图一律走 Data + NSBitmapImageRep(data:)：contentsOf: 便捷初始化在 CI 的 SDK 上不存在（0.2.6 首构建实锤）。
     private static func resourceImage() -> NSImage? {
         guard let p1 = Bundle.main.path(forResource: "StickySideMenuBar", ofType: "png"),
               let p2 = Bundle.main.path(forResource: "StickySideMenuBar@2x", ofType: "png"),
-              let rep1 = NSBitmapImageRep(contentsOf: URL(fileURLWithPath: p1)),
-              let rep2 = NSBitmapImageRep(contentsOf: URL(fileURLWithPath: p2)) else { return nil }
+              let d1 = try? Data(contentsOf: URL(fileURLWithPath: p1)),
+              let d2 = try? Data(contentsOf: URL(fileURLWithPath: p2)),
+              let rep1 = NSBitmapImageRep(data: d1),
+              let rep2 = NSBitmapImageRep(data: d2) else { return nil }
         rep1.size = size
         rep2.size = size
         let image = NSImage(size: size)
