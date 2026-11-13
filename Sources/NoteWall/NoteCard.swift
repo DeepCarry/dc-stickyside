@@ -313,27 +313,35 @@ struct NoteCard: View {
     }
 
     /// 右下折角：纸角自然卷起。紧凑行不画；两种模式都画。
-    /// 三件套：折线是向角心弯的弧（不是直线）；翻面从角尖的白渐变到纸色；
-    /// 折线内侧是一道渐隐的软影（不是硬线）。原型见 fold-prototype-2026-11-13.html（B 中卷 32pt）。
-    /// 折角要顺着卡片的圆角走：把 32pt 的小块按卡片圆角裁一下，否则方角会戳出圆角外面。
+    /// 0.3.3 起用贴图（FoldImage，42pt 透明 PNG）：代码画版本在快照上看着达标、真机上太淡，
+    /// 贴图是像素级保真。图是纸色无关的（翻面白带透明度、影子黑带透明度），一张图通吃六色纸。
+    /// 图解不出来时回退到代码画的旧折角（FoldFlapShape/FoldShadowShape，0.3.2 的 32pt 版）。
+    /// 折角要顺着卡片的圆角走：把 42pt 的小块按卡片圆角裁一下，否则方角会戳出圆角外面。
     @ViewBuilder
     private var foldOverlay: some View {
         if !compact {
-            ZStack {
-                FoldShadowShape()
-                    .fill(LinearGradient(
-                        colors: [.black.opacity(0.20), .black.opacity(0)],
-                        startPoint: .bottomTrailing, endPoint: .topLeading))
-                    .blur(radius: 2.5)
-                FoldFlapShape()
-                    .fill(RadialGradient(stops: [
-                        .init(color: .white, location: 0),
-                        .init(color: note.paper.paperLight, location: 0.45),
-                        .init(color: note.paper.paper, location: 1),
-                    ], center: .bottomTrailing, startRadius: 0, endRadius: 32))
+            if let nsImage = FoldImage.nsImage {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .frame(width: FoldImage.size, height: FoldImage.size)
+                    .clipShape(RoundedRectangle(cornerRadius: T.rCard, style: .continuous))
+            } else {
+                ZStack {
+                    FoldShadowShape()
+                        .fill(LinearGradient(
+                            colors: [.black.opacity(0.20), .black.opacity(0)],
+                            startPoint: .bottomTrailing, endPoint: .topLeading))
+                        .blur(radius: 2.5)
+                    FoldFlapShape()
+                        .fill(RadialGradient(stops: [
+                            .init(color: .white, location: 0),
+                            .init(color: note.paper.paperLight, location: 0.45),
+                            .init(color: note.paper.paper, location: 1),
+                        ], center: .bottomTrailing, startRadius: 0, endRadius: 32))
+                }
+                .frame(width: 32, height: 32)
+                .clipShape(RoundedRectangle(cornerRadius: T.rCard, style: .continuous))
             }
-            .frame(width: 32, height: 32)
-            .clipShape(RoundedRectangle(cornerRadius: T.rCard, style: .continuous))
         }
     }
 
