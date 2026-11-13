@@ -312,25 +312,57 @@ struct NoteCard: View {
         }
     }
 
-    /// 右下折角：纸的厚度。紧凑行不画；两种模式都画。
-    /// 折角要顺着卡片的圆角走：把 18pt 的小块按卡片圆角裁一下，否则方角会戳出圆角外面。
+    /// 右下折角：纸角自然卷起。紧凑行不画；两种模式都画。
+    /// 三件套：折线是向角心弯的弧（不是直线）；翻面从角尖的白渐变到纸色；
+    /// 折线内侧是一道渐隐的软影（不是硬线）。原型见 fold-prototype-2026-11-13.html（B 中卷 32pt）。
+    /// 折角要顺着卡片的圆角走：把 32pt 的小块按卡片圆角裁一下，否则方角会戳出圆角外面。
     @ViewBuilder
     private var foldOverlay: some View {
         if !compact {
-            FoldShape()
-                .fill(.white.opacity(0.45))
-                .frame(width: 18, height: 18)
-                .clipShape(RoundedRectangle(cornerRadius: T.rCard, style: .continuous))
+            ZStack {
+                FoldShadowShape()
+                    .fill(LinearGradient(
+                        colors: [.black.opacity(0.20), .black.opacity(0)],
+                        startPoint: .bottomTrailing, endPoint: .topLeading))
+                    .blur(radius: 2.5)
+                FoldFlapShape()
+                    .fill(RadialGradient(stops: [
+                        .init(color: .white, location: 0),
+                        .init(color: note.paper.paperLight, location: 0.45),
+                        .init(color: note.paper.paper, location: 1),
+                    ], center: .bottomTrailing, startRadius: 0, endRadius: 32))
+            }
+            .frame(width: 32, height: 32)
+            .clipShape(RoundedRectangle(cornerRadius: T.rCard, style: .continuous))
         }
     }
 
-    /// 直角三角形：斜边朝左上，直角贴着卡片右下角。
-    private struct FoldShape: Shape {
+    /// 曲面翻面：折线是向角心弯的二次贝塞尔弧，翻面是折线与卡片角之间的曲面三角。
+    /// 坐标为相对值（0.8125 = 原型 32pt 盒子里控制点 26pt 的位置），与盒子尺寸无关。
+    private struct FoldFlapShape: Shape {
         func path(in rect: CGRect) -> Path {
             var p = Path()
-            p.move(to: CGPoint(x: rect.maxX, y: rect.minY))
-            p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-            p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            let w = rect.width, h = rect.height
+            p.move(to: CGPoint(x: 0, y: h))
+            p.addQuadCurve(to: CGPoint(x: w, y: 0),
+                           control: CGPoint(x: w * 0.8125, y: h * 0.8125))
+            p.addLine(to: CGPoint(x: w, y: h))
+            p.closeSubpath()
+            return p
+        }
+    }
+
+    /// 贴着折线的月牙形阴影：外缘是同一条折线弧，内缘是向卡片中心偏移的弧。
+    /// 填充黑渐变（折线处 0.20 → 内侧 0）再整体模糊，影子是渐隐的，不是一条线。
+    private struct FoldShadowShape: Shape {
+        func path(in rect: CGRect) -> Path {
+            var p = Path()
+            let w = rect.width, h = rect.height
+            p.move(to: CGPoint(x: 0, y: h))
+            p.addQuadCurve(to: CGPoint(x: w, y: 0),
+                           control: CGPoint(x: w * 0.8125, y: h * 0.8125))
+            p.addQuadCurve(to: CGPoint(x: 0, y: h),
+                           control: CGPoint(x: w * 0.375, y: h * 0.375))
             p.closeSubpath()
             return p
         }
