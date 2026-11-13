@@ -34,7 +34,7 @@ enum HotkeySlot: String, Codable, CaseIterable {
     case newNote
     case openWall
 
-    var title: String { self == .newNote ? "新建便签" : "打开便签墙" }
+    var title: String { self == .newNote ? "新建便签" : "打开随手贴" }
 }
 
 /// 完整的快捷键配置（两个位）

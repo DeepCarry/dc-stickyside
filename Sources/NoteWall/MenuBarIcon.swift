@@ -14,6 +14,9 @@ import AppKit
 ///   画左纸 → 沿右纸擦缝 → 画右纸 → 沿前纸擦缝 → 画前纸 → 挖掉纸面内容。
 ///
 /// 为什么是模板图（`isTemplate = true`）：菜单栏图标都是单色的，系统按明暗自动反色。
+///
+/// 字形已换代（设计稿 V1：单张便签 + 微笑 + 简化图钉）：`make()` 优先加载包内位图资源
+/// （`StickySideMenuBar.png` / `@2x`），资源缺失时回退到本文件的代码绘制（三纸字形）。
 /// 位图里只有 alpha 起作用，所以深色栏是白纸、浅色栏是黑纸。
 enum MenuBarIcon {
     static let size = NSSize(width: 18, height: 18)
@@ -64,8 +67,9 @@ enum MenuBarIcon {
 
     // MARK: - 输出
 
-    /// 1x / 2x / 3x 三档位图，换屏也不会糊
+    /// 优先用设计稿位图（V1 字形）；资源不在包里时（裸跑测试等）回退代码绘制，任何环境都有图标
     static func make() -> NSImage {
+        if let image = resourceImage() { return image }
         let image = NSImage(size: size)
         for scale in [CGFloat(1), 2, 3] {
             if let rep = bitmap(scale: scale) {
@@ -74,7 +78,23 @@ enum MenuBarIcon {
             }
         }
         image.isTemplate = true
-        image.accessibilityDescription = "便签墙"
+        image.accessibilityDescription = "随手贴"
+        return image
+    }
+
+    /// 设计稿模板图：18pt 的 1x / 2x 两档位图，Bundle 里齐全才用
+    private static func resourceImage() -> NSImage? {
+        guard let p1 = Bundle.main.path(forResource: "StickySideMenuBar", ofType: "png"),
+              let p2 = Bundle.main.path(forResource: "StickySideMenuBar@2x", ofType: "png"),
+              let rep1 = NSBitmapImageRep(contentsOf: URL(fileURLWithPath: p1)),
+              let rep2 = NSBitmapImageRep(contentsOf: URL(fileURLWithPath: p2)) else { return nil }
+        rep1.size = size
+        rep2.size = size
+        let image = NSImage(size: size)
+        image.addRepresentation(rep1)
+        image.addRepresentation(rep2)
+        image.isTemplate = true
+        image.accessibilityDescription = "随手贴"
         return image
     }
 

@@ -32,7 +32,7 @@ if args.contains("--menubaricon") {
         check("画布 18×18", image.size == NSSize(width: 18, height: 18), "\(image.size)")
         // 菜单栏里所有图标都是单色的：必须是模板图，系统按明暗自动反色
         check("是模板图（系统自动反色，单色）", image.isTemplate)
-        check("带无障碍描述", image.accessibilityDescription == "便签墙")
+        check("带无障碍描述", image.accessibilityDescription == "随手贴")
         check("备了 1x/2x/3x 三档（外接屏不糊）", image.representations.count >= 3,
               "\(image.representations.count)")
 
@@ -277,8 +277,8 @@ if args.contains("--menutest") {
         let menu = AppDelegate.makeStatusMenu(target: delegate)
 
         let titles = menu.items.compactMap { $0.isSeparatorItem ? nil : $0.title }
-        check("条目顺序：新建便签 / 打开便签墙 / 设置… / 退出",
-              titles == ["新建便签", "打开便签墙", "设置…", "退出"], "\(titles)")
+        check("条目顺序：新建便签 / 打开随手贴 / 设置… / 退出",
+              titles == ["新建便签", "打开随手贴", "设置…", "退出"], "\(titles)")
 
         let seps = menu.items.enumerated().filter { $0.element.isSeparatorItem }.map(\.offset)
         check("两条分隔线，分别在动作之后与设置之后（实得 \(seps)）", seps == [2, 4])
@@ -1555,7 +1555,7 @@ if args.contains("--walltest") {
         let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760),
                            styleMask: [.titled, .closable, .fullSizeContentView],
                            backing: .buffered, defer: false)
-        win.title = "便签墙"
+        win.title = "随手贴"
         win.titlebarAppearsTransparent = true
         win.titleVisibility = .hidden
         let dark = args.contains("dark")
@@ -2458,7 +2458,7 @@ if args.contains("--settingsfrommenu") {
         let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 720),
                            styleMask: [.titled, .fullSizeContentView],
                            backing: .buffered, defer: false)
-        win.title = "便签墙"
+        win.title = "随手贴"
         win.titlebarAppearsTransparent = true
         win.contentView = NSHostingView(rootView:
             WallView().environmentObject(store).frame(width: 1000, height: 720))

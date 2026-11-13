@@ -406,7 +406,7 @@ struct SettingsSheet: View {
                                     .toggleStyle(.switch).labelsHidden().handCursor()
                             }
                         }
-                        row("开机自动启动", subtitle: "登录时自动打开便签墙") {
+                        row("开机自动启动", subtitle: "登录时自动打开随手贴") {
                             if RenderFlags.snapshot {
                                 FakeSwitch(on: box.launchAtLogin)
                             } else {
@@ -549,7 +549,7 @@ struct SettingsSheet: View {
         let combo = store.hotkeys.combo(for: slot)
         VStack(spacing: 0) {
             row(slot.title,
-                subtitle: slot == .newNote ? "在任何 App 里唤起悬浮输入面板" : "唤起整个便签墙窗口",
+                subtitle: slot == .newNote ? "在任何 App 里唤起悬浮输入面板" : "唤起整个随手贴窗口",
                 showDivider: false) {
                 if RenderFlags.snapshot {
                     keyCap(combo.display)

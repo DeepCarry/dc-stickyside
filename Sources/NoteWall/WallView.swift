@@ -259,7 +259,7 @@ struct WallContent: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("便签墙")
+                Text("随手贴")
                     .font(.ui(T.titleSize, .semibold))
                     .foregroundStyle(T.text)
                 Text("每个灵感，都值得记下。便签自动保存。")

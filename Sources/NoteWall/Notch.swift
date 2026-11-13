@@ -728,7 +728,7 @@ struct NotchListView: View {
         // 收起态必须零像素：不画黑的同时也不画按钮
         .scaleEffect(model.isExpanded ? 1 : 0.7)
         .opacity(model.isExpanded ? 1 : 0)
-        .help(label == "新建" ? "新建便签" : "打开便签墙")
+        .help(label == "新建" ? "新建便签" : "打开随手贴")
     }
 }
 
@@ -1072,7 +1072,7 @@ struct NotchNoteDetailView: View {
         HStack(spacing: 8) {
             actionButton(copied ? "checkmark" : "doc.on.doc",
                          label: copied ? "已复制" : "复制") { copyTapped() }
-            actionButton("rectangle.stack", label: "在便签墙打开") { model.onOpenInWall?(note) }
+            actionButton("rectangle.stack", label: "在随手贴打开") { model.onOpenInWall?(note) }
             Spacer(minLength: 0)
             actionButton("trash", label: "删除") { model.onDeleteNote?(note) }
         }

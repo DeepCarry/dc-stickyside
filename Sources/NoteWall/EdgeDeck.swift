@@ -605,7 +605,7 @@ struct EdgeDeckView: View {
         }
         Divider()
         Button("新建便签") { onContextAction(.newNote) }
-        Button("打开便签墙") { onContextAction(.openWall) }
+        Button("打开随手贴") { onContextAction(.openWall) }
         Button("隐藏边缘条") { onContextAction(.hide) }
     }
 
@@ -778,7 +778,7 @@ struct EdgeDeckView: View {
         // 这里的高度必须与 EdgeDeckGeom.actionBlockHeight 严格一致：
         // 常量少算 1pt，SwiftUI 就会把窗口撑大 1pt，几何断言立刻抓到。
         VStack(spacing: EdgeDeckGeom.actionGap) {
-            edgeAction("macwindow", label: "打开便签墙") {
+            edgeAction("macwindow", label: "打开随手贴") {
                 onContextAction(.openWall)
             }
             edgeAction("plus", label: "新建便签") {

@@ -33,7 +33,7 @@ struct NoteWallApp: App {
     @StateObject private var store = AppContext.shared.store
 
     var body: some Scene {
-        WindowGroup("便签墙", id: "wall") {
+        WindowGroup("随手贴", id: "wall") {
             WallView()
                 .environmentObject(store)
                 .frame(minWidth: 720, minHeight: 480)
@@ -171,7 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(withTitle: "新建便签", action: #selector(newNote), keyEquivalent: "")
             .target = target
-        menu.addItem(withTitle: "打开便签墙", action: #selector(openWall), keyEquivalent: "")
+        menu.addItem(withTitle: "打开随手贴", action: #selector(openWall), keyEquivalent: "")
             .target = target
         menu.addItem(.separator())
         // ⌘, 是 macOS 的「设置」惯例。status menu 里的快捷键只在菜单展开时生效，
