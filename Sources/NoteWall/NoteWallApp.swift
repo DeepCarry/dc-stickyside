@@ -39,22 +39,25 @@ struct NoteWallApp: App {
                 .frame(minWidth: 720, minHeight: 480)
                 .background(T.bg)
                 .background(WindowHooks())
+                // 折叠按钮放在标题栏左侧：macOS 标准侧边栏图标，Muse/ChatGPT/Obsidian 用的就是它。
+                // 注意：.toolbar 是 View 修饰器，不是 Scene 修饰器——必须挂在窗口根视图上，
+                // 挂在 WindowGroup（Scene）上编译不过（'some Scene' has no member 'toolbar'）。
+                // next 是计算属性不是方法，调用不加括号。
+                .toolbar {
+                    ToolbarItem(placement: .navigation) {
+                        Button {
+                            store.sidebarMode = store.sidebarMode.next
+                        } label: {
+                            Image(systemName: "sidebar.left")
+                                .font(.system(size: 13))
+                        }
+                        .help("折叠侧边栏 (⌘B)")
+                        .keyboardShortcut("b", modifiers: .command)
+                    }
+                }
         }
         // v8：系统标题栏（居中显示当前视图名，产品名不在标题栏）。
-        // 折叠按钮放在标题栏左侧：macOS 标准侧边栏图标，Muse/ChatGPT/Obsidian 用的就是它。
         .windowStyle(.titleBar)
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    store.sidebarMode = store.sidebarMode.next()
-                } label: {
-                    Image(systemName: "sidebar.left")
-                        .font(.system(size: 13))
-                }
-                .help("折叠侧边栏 (⌘B)")
-                .keyboardShortcut("b", modifiers: .command)
-            }
-        }
         .defaultSize(width: 1180, height: 820)
         .commands {
             CommandGroup(replacing: .newItem) {}

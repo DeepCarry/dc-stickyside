@@ -968,11 +968,12 @@ struct WallContent: View {
     /// 列表视图的紧凑行：与卡片共用同一套操作（打开 / 置顶 / 收藏 / 复制 / 删除），
     /// 只是不旋转、不贴胶带、不拖拽。
     private func listCard(_ note: Note) -> some View {
+        // 注意：NoteCard 是 memberwise 初始化，实参顺序必须跟属性声明顺序一致
+        // （onOpen 在 tilt/neat/isNew/compact 之前），否则编译报错
+        // "argument 'onOpen' must precede argument 'compact'"。
         NoteCard(
             note: note,
             walls: orderedWalls,
-            compact: true,
-            neat: store.neatMode,
             onOpen: {
                 ui.editing = note
                 ui.showDetail = true
@@ -989,6 +990,8 @@ struct WallContent: View {
             isEdgePinned: store.isEdgePinned(note.id),
             canLock: store.canLock(note),
             showCheckCount: store.checkCountVisible,
+            neat: store.neatMode,
+            compact: true,
             onFavorite: { withAnimation { store.toggleFavorite(note.id) } }
         )
     }
@@ -1009,13 +1012,11 @@ struct WallContent: View {
     }
 
     private func cardBody(_ note: Note) -> some View {
+        // 实参顺序跟 NoteCard 属性声明顺序一致（见 listCard 的注释）。
         NoteCard(
             note: note,
             walls: orderedWalls,
             isDragging: dragState.source == note.id,
-            tilt: true,
-            neat: store.neatMode,
-            isNew: note.id == store.lastAddedID,
             onOpen: {
                 ui.editing = note
                 ui.showDetail = true
@@ -1033,6 +1034,9 @@ struct WallContent: View {
             isEdgePinned: store.isEdgePinned(note.id),
             canLock: store.canLock(note),
             showCheckCount: store.checkCountVisible,
+            tilt: true,
+            neat: store.neatMode,
+            isNew: note.id == store.lastAddedID,
             onFavorite: { withAnimation { store.toggleFavorite(note.id) } }
         )
         // 卡片高度要从真实布局里量：判断「落在上半还是下半」需要它，
@@ -1065,43 +1069,38 @@ struct WallContent: View {
     }
 
     private var emptyState: some View {
+        // 四种空态共用同一个 VStack：之前是两个 return 分支，底层类型对不上，
+        // 编译报 "opaque return type 'some View' ... do not have matching underlying types"。
         // 桌面便签尚未实现：诚实说明，不放一个点不开的假入口。
-        if store.smartView == .desktop {
-            return VStack(spacing: 10) {
-                Image(systemName: "macwindow")
-                    .font(.system(size: 26, weight: .light))
-                    .foregroundStyle(T.textFaint)
-                Text("桌面便签即将推出")
-                    .font(.ui(14, .medium))
-                    .foregroundStyle(T.textDim)
-                Text("把重要的便签钉在桌面上，始终可见。先用屏幕边缘条顶一顶——它就在屏幕边上。")
-                    .font(.ui(12))
-                    .foregroundStyle(T.textFaint)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 420)
-                Button("去设置里打开边缘条") { ui.showSettings = true }
-                    .buttonStyle(GhostButtonStyle(height: 26, hPad: 12)).handCursor()
-                    .padding(.top, 4)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 70)
-        }
         let filtered = store.hasActiveFilters || !store.searchText.isEmpty
+        let icon: String
         let title: String
         let subtitle: String
+        let showEdgeButton: Bool
         switch store.smartView {
+        case .desktop:
+            icon = "macwindow"
+            title = "桌面便签即将推出"
+            subtitle = "把重要的便签钉在桌面上，始终可见。先用屏幕边缘条顶一顶——它就在屏幕边上。"
+            showEdgeButton = true
         case .favorites:
+            icon = filtered ? "line.3.horizontal.decrease.circle" : "square.on.square.dashed"
             title = filtered ? "没有符合条件的便签" : "还没有收藏的便签"
             subtitle = filtered ? "试试放宽筛选条件" : "在卡片菜单里点「收藏」，它就会出现在这里"
+            showEdgeButton = false
         case .recent:
+            icon = filtered ? "line.3.horizontal.decrease.circle" : "square.on.square.dashed"
             title = filtered ? "没有符合条件的便签" : "最近 30 天没有动过的便签"
             subtitle = filtered ? "试试放宽筛选条件" : "改一张旧便签，它就会出现在这里"
-        case .desktop, .none:
+            showEdgeButton = false
+        case .none:
+            icon = filtered ? "line.3.horizontal.decrease.circle" : "square.on.square.dashed"
             title = filtered ? "没有符合条件的便签" : "这面墙还是空的"
             subtitle = filtered ? "试试放宽筛选条件" : "按 \(store.hotkeys.newNote.display) 随手记一条，或直接在上面输入"
+            showEdgeButton = false
         }
         return VStack(spacing: 10) {
-            Image(systemName: filtered ? "line.3.horizontal.decrease.circle" : "square.on.square.dashed")
+            Image(systemName: icon)
                 .font(.system(size: 26, weight: .light))
                 .foregroundStyle(T.textFaint)
             Text(title)
@@ -1110,6 +1109,13 @@ struct WallContent: View {
             Text(subtitle)
                 .font(.ui(12))
                 .foregroundStyle(T.textFaint)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
+            if showEdgeButton {
+                Button("去设置里打开边缘条") { ui.showSettings = true }
+                    .buttonStyle(GhostButtonStyle(height: 26, hPad: 12)).handCursor()
+                    .padding(.top, 4)
+            }
             if store.hasActiveFilters {
                 Button("清除筛选") { withAnimation { store.clearFilters() } }
                     .buttonStyle(GhostButtonStyle(height: 26, hPad: 12)).handCursor()
