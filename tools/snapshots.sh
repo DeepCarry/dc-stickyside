@@ -61,7 +61,7 @@ fi
 if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
   git config user.name "github-actions[bot]"
   git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-  git add "$OUT"
+  git add -f -- "$OUT"
   if git diff --cached --quiet; then
     echo "快照与仓库一致，无需提交"
   else
