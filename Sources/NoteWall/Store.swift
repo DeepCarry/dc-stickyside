@@ -60,6 +60,11 @@ struct Archive: Codable {
     var edgePinnedIds: [UUID]? = nil
     /// 首次提示「边缘有条」是否已展示过
     var edgeIntroduced: Bool? = nil
+
+    // 0.3.0：侧栏三态 / 主区视图 / 整齐模式。Optional，见上面注释。
+    var sidebarMode: SidebarMode? = nil
+    var viewMode: ViewMode? = nil
+    var neatMode: Bool? = nil
 }
 
 // MARK: - Store
@@ -110,6 +115,21 @@ final class AppStore: ObservableObject {
             if persistent { scheduleSave() }
         }
     }
+
+    /// 侧边栏三态（⌘B / 标题栏按钮循环）。重启保持。
+    @Published var sidebarMode: SidebarMode = .expanded { didSet { scheduleSave() } }
+    /// 主区视图：网格 / 列表。重启保持。
+    @Published var viewMode: ViewMode = .grid { didSet { scheduleSave() } }
+    /// 整齐模式：关掉卡片的旋转、胶带与折角。设置里可开。
+    @Published var neatMode: Bool = false { didSet { scheduleSave() } }
+    /// 侧栏智能视图（收藏 / 最近 / 桌面便签）。会话态，不存盘——
+    /// 和 selectedWallID / searchText 一样，重启回到全部。
+    @Published var smartView: SmartView? = nil
+    /// 刚添加的便签 id：卡片用它做一次「贴上去」的落下动画，1 秒后清掉。
+    @Published private(set) var lastAddedID: UUID? = nil
+    /// 刚捕捉的便签（最多 3 张）：英雄纸下面那排胶囊，点开详情、× 只是从这排拿掉。
+    /// 会话态——重启后这排是空的，墙上的便签不受影响。
+    @Published private(set) var recentCaptures: [UUID] = []
 
     /// nil 代表「全部」
     @Published var selectedWallID: UUID? = nil
@@ -213,6 +233,9 @@ final class AppStore: ObservableObject {
             edgeCount = a.edgeCount ?? 8
             edgePinnedIds = a.edgePinnedIds ?? []
             edgeIntroduced = a.edgeIntroduced ?? false
+            sidebarMode = a.sidebarMode ?? .expanded
+            viewMode = a.viewMode ?? .grid
+            neatMode = a.neatMode ?? false
             if let f = a.captureFrame, f.count == 4 {
                 captureFrame = CGRect(x: f[0], y: f[1], width: f[2], height: f[3])
             }
@@ -261,6 +284,9 @@ final class AppStore: ObservableObject {
         a.edgeCount = edgeCount
         a.edgePinnedIds = edgePinnedIds.isEmpty ? nil : edgePinnedIds
         a.edgeIntroduced = edgeIntroduced
+        a.sidebarMode = sidebarMode
+        a.viewMode = viewMode
+        a.neatMode = neatMode
         if let f = captureFrame {
             a.captureFrame = [Double(f.origin.x), Double(f.origin.y),
                               Double(f.size.width), Double(f.size.height)]
@@ -307,8 +333,23 @@ final class AppStore: ObservableObject {
         note.image = image
         note.sortOrder = maxOrder + 100
         notes.append(note)
+        // 刚贴上的那张：卡片落下动画用；胶囊行也记一笔，三个入口都看得到它。
+        lastAddedID = note.id
+        recentCaptures.removeAll { $0 == note.id }
+        recentCaptures.insert(note.id, at: 0)
+        if recentCaptures.count > 3 { recentCaptures = Array(recentCaptures.prefix(3)) }
+        let addedID = note.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self, self.lastAddedID == addedID else { return }
+            self.lastAddedID = nil
+        }
         saveNow()
         return note
+    }
+
+    /// 胶囊行里的 ×：只是把这张从「刚捕捉」那排拿掉，墙上的便签不动。
+    func dismissRecentCapture(_ id: UUID) {
+        recentCaptures.removeAll { $0 == id }
     }
 
     func update(_ note: Note) {
@@ -339,6 +380,27 @@ final class AppStore: ObservableObject {
         saveNow()
     }
 
+    /// 收藏 / 取消收藏。置顶是「排在墙的最前面」，收藏是「收进侧栏的集合」，
+    /// 两件事不互相代替——参考图的侧栏同时有「收藏」和图钉，就是这个意思。
+    func toggleFavorite(_ id: UUID) {
+        guard let i = notes.firstIndex(where: { $0.id == id }) else { return }
+        notes[i].isFavorite = !(notes[i].isFavorite ?? false)
+        saveNow()
+    }
+
+    /// 侧栏智能视图的计数。最近 = 30 天内动过的便签；桌面便签尚未实现，返回 0。
+    func smartCount(_ view: SmartView) -> Int {
+        switch view {
+        case .favorites:
+            return notes.filter { $0.deletedAt == nil && $0.favorite }.count
+        case .recent:
+            let cutoff = Date().addingTimeInterval(-30 * 86400)
+            return notes.filter { $0.deletedAt == nil && $0.updatedAt > cutoff }.count
+        case .desktop:
+            return 0
+        }
+    }
+
     func move(_ id: UUID, to wallID: UUID) {
         guard let i = notes.firstIndex(where: { $0.id == id }),
               notes[i].wallID != wallID,
@@ -365,6 +427,7 @@ final class AppStore: ObservableObject {
     func delete(_ id: UUID) {
         guard let i = notes.firstIndex(where: { $0.id == id }), notes[i].deletedAt == nil else { return }
         notes[i].deletedAt = Date()
+        recentCaptures.removeAll { $0 == id }
         pushUndo(UndoStep(title: "删除便签",
                           undo: { [weak self] in self?.setDeleted(id, false) },
                           redo: { [weak self] in self?.setDeleted(id, true) }))
@@ -828,7 +891,21 @@ final class AppStore: ObservableObject {
     var visibleNotes: [Note] {
         var list = notes.filter { $0.deletedAt == nil }
 
-        if let wid = selectedWallID {
+        // 智能视图先定集合：收藏 / 最近是规则算出来的，桌面便签尚未实现（空集合 + 专属空态）。
+        switch smartView {
+        case .favorites:
+            list = list.filter(\.favorite)
+        case .recent:
+            let cutoff = Date().addingTimeInterval(-30 * 86400)
+            list = list.filter { $0.updatedAt > cutoff }
+        case .desktop:
+            return []
+        case .none:
+            break
+        }
+
+        // 智能视图里不按墙筛：选了收藏/最近时 selectedWallID 已经清掉，这里再守一道。
+        if smartView == nil, let wid = selectedWallID {
             list = list.filter { $0.wallID == wid }
         }
         if let tag = tagFilter {
@@ -855,33 +932,21 @@ final class AppStore: ObservableObject {
 
         let query = SearchQuery.parse(searchText)
         if !query.isEmpty {
-            if let t = query.tag {
-                list = list.filter { $0.tag == t }
-            }
-            if let w = query.wallName {
-                let ids = Set(walls.filter { $0.name == w }.map(\.id))
-                list = list.filter { ids.contains($0.wallID) }
-            }
-            if query.hasImage { list = list.filter { $0.image != nil } }
-            if query.lockedOnly { list = list.filter(\.isLocked) }
-            let kw = query.keyword.lowercased()
-            if !kw.isEmpty {
-                list = list.filter { n in
-                    // 锁定便签的正文不参与索引；命中标签时仍以「已锁定」形态出现（PRD §2.6）
-                    if n.tag.lowercased().contains(kw) { return true }
-                    if n.isLocked { return false }
-                    return n.text.lowercased().contains(kw)
-                }
-            }
+            list = list.filter { SearchQuery.matches($0, query: query, walls: walls) }
         }
 
         let pinned = list.filter(\.isPinned)
         var rest = list.filter { !$0.isPinned }
-        switch sortMode {
-        case .newest: rest.sort { $0.createdAt > $1.createdAt }
-        case .oldest: rest.sort { $0.createdAt < $1.createdAt }
-        case .edited: rest.sort { $0.updatedAt > $1.updatedAt }
-        case .manual: rest.sort { $0.sortOrder < $1.sortOrder }
+        if smartView == .recent {
+            // 「最近」按动过的时间排，不跟墙的排序模式走
+            rest.sort { $0.updatedAt > $1.updatedAt }
+        } else {
+            switch sortMode {
+            case .newest: rest.sort { $0.createdAt > $1.createdAt }
+            case .oldest: rest.sort { $0.createdAt < $1.createdAt }
+            case .edited: rest.sort { $0.updatedAt > $1.updatedAt }
+            case .manual: rest.sort { $0.sortOrder < $1.sortOrder }
+            }
         }
         if !pinned.isEmpty {
             rest = pinned.sorted { $0.sortOrder < $1.sortOrder } + rest
@@ -952,6 +1017,26 @@ struct SearchQuery {
         }
         q.keyword = words.joined(separator: " ")
         return q
+    }
+
+    /// 全局搜索（⌘K 浮层）与墙内搜索共用同一套匹配规则：两处一旦分叉，
+    /// 同一个词在浮层里找得到、墙里找不到，用户会以为搜索坏了。
+    static func matches(_ note: Note, query: SearchQuery, walls: [Wall]) -> Bool {
+        if let t = query.tag, note.tag != t { return false }
+        if let w = query.wallName {
+            let ids = Set(walls.filter { $0.name == w }.map(\.id))
+            guard ids.contains(note.wallID) else { return false }
+        }
+        if query.hasImage, note.image == nil { return false }
+        if query.lockedOnly, !note.isLocked { return false }
+        let kw = query.keyword.lowercased()
+        if !kw.isEmpty {
+            // 锁定便签的正文不参与索引；命中标签时仍以「已锁定」形态出现（PRD §2.6）
+            if note.tag.lowercased().contains(kw) { return true }
+            if note.isLocked { return false }
+            return note.text.lowercased().contains(kw)
+        }
+        return true
     }
 }
 

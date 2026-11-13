@@ -185,6 +185,8 @@ struct PlainTextEditor: NSViewRepresentable {
     let fontSize: CGFloat
     let ink: Color
     var focusOnAppear = false
+    /// 外部想让它获得焦点时 +1（比如点「＋ 新建便签」）。focusOnAppear 只管挂载那一次。
+    var focusToken: Int = 0
 
     func makeCoordinator() -> PlainTextCoordinator {
         PlainTextCoordinator(binding: $text)
@@ -235,6 +237,7 @@ struct PlainTextEditor: NSViewRepresentable {
         sv.focusOnAppear = focusOnAppear
         context.coordinator.textView = tv
         context.coordinator.lastSynced = text
+        context.coordinator.lastFocusToken = focusToken
         return sv
     }
 
@@ -247,6 +250,15 @@ struct PlainTextEditor: NSViewRepresentable {
         if tv.font != font { tv.font = font }
         let color = NSColor(ink)
         if tv.textColor != color { tv.textColor = color }
+
+        // 外部点「新建」时把焦点抢回来。只在 token 变了时做一次，不干扰正在打字的人。
+        if focusToken != coord.lastFocusToken {
+            coord.lastFocusToken = focusToken
+            DispatchQueue.main.async { [weak tv] in
+                guard let tv, let w = tv.window else { return }
+                w.makeFirstResponder(tv)
+            }
+        }
 
         // ① 外层值没变（Toast / store / 主题等引起的重算）→ 一个字都不碰
         // ② 正在输入法组合 → 一个字都不碰
@@ -278,6 +290,7 @@ final class PlainTextScrollView: NSScrollView {
 final class PlainTextCoordinator: NSObject, NSTextViewDelegate {
     var binding: Binding<String>
     var lastSynced: String
+    var lastFocusToken: Int = 0
     weak var textView: NSTextView?
 
     init(binding: Binding<String>) {

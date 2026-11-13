@@ -65,6 +65,10 @@ struct Note: Codable, Identifiable, Hashable {
     var updatedAt: Date = Date()    // 最近编辑时间，仅用于「最近编辑」排序
     var sortOrder: Int = 0
     var isPinned: Bool = false
+    /// 收藏：Optional 是有意的——老存档没有这个 key，非可选字段缺 key 会让整个存档解码失败（见 Archive 的注释）。
+    var isFavorite: Bool? = nil
+    /// 收藏态：老存档里没有这一项，读出来就是没收藏。
+    var favorite: Bool { isFavorite ?? false }
     var deletedAt: Date? = nil      // 软删除：进回收站
     var image: NoteImage? = nil
 

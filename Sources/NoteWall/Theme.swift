@@ -34,6 +34,60 @@ enum Appearance: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// 侧边栏三态：展开 → 图标栏 → 收起。⌘B / 标题栏按钮循环切换，重启保持。
+enum SidebarMode: String, Codable, CaseIterable, Identifiable {
+    case expanded, rail, hidden
+    var id: String { rawValue }
+    var next: SidebarMode {
+        switch self {
+        case .expanded: return .rail
+        case .rail: return .hidden
+        case .hidden: return .expanded
+        }
+    }
+    /// 展开态宽度（v8 原型）；图标栏 54pt；收起不渲染。
+    var width: CGFloat {
+        switch self {
+        case .expanded: return 216
+        case .rail: return 54
+        case .hidden: return 0
+        }
+    }
+}
+
+/// 主区视图：网格是桌面，列表是紧凑行，适合扫几十张。
+enum ViewMode: String, Codable, CaseIterable, Identifiable {
+    case grid, list
+    var id: String { rawValue }
+}
+
+/// 侧栏里的智能视图：不属于任何一面墙，按规则算出来的集合。
+enum SmartView: String, Codable, CaseIterable, Identifiable {
+    case favorites, recent, desktop
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .favorites: return "收藏"
+        case .recent: return "最近"
+        case .desktop: return "桌面便签"
+        }
+    }
+    var subtitle: String {
+        switch self {
+        case .favorites: return "你标星的便签都在这里。"
+        case .recent: return "最近 30 天动过的便签。"
+        case .desktop: return "把重要的便签钉在桌面，始终可见。"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .favorites: return "star"
+        case .recent: return "clock"
+        case .desktop: return "macwindow"
+        }
+    }
+}
+
 /// 把外观应用到所有窗口。改 `NSApp.appearance` 会让 SwiftUI 重新解析动态色，
 /// 不需要重建视图树——否则切主题会把正在编辑的草稿和滚动位置一起清掉。
 enum ThemeApplier {
@@ -58,8 +112,11 @@ enum T {
     // 层次：画布 < 顶栏 < 浮层 < 控件。
     // 之前整窗只有一个 #0A0A0C，卡片飘在近黑上，看起来是一团黑；
     // 现在画布抬到 #1B1B1E，顶栏再亮一档，靠明度差而不是靠描边分出「上工具栏/下画布」。
-    static let bg     = Color.dyn(0xFFFFFF, 0x212125)   // 画布（便签网格底）
-    static let panel  = Color.dyn(0xEFEEE9, 0x2E2E33)   // 顶栏、弹层底
+    static let bg     = Color.dyn(0xFFFFFF, 0x212121)   // 画布（便签网格底）
+    static let panel  = Color.dyn(0xF7F6F2, 0x2E2E33)   // 顶栏、弹层底
+    /// 侧栏：浅色米白、深色比画布再暗一档（ChatGPT 双色）。不能复用 T.panel：
+    /// 深色下 panel 比画布亮（顶栏），侧栏比画布暗，两者方向相反。
+    static let sidebar = Color.dyn(0xF7F6F2, 0x171717)
     static let float  = Color.dyn(0xFFFFFF, 0x35353B)   // 悬浮面板
     static let raised = Color.dyn(0xFFFFFF, 0x3E3E45)   // 抬起的控件
 
