@@ -49,3 +49,16 @@ StickySide is a lightweight sticky notes and productivity app for macOS. Capture
 ## 技术
 
 Swift Package（swift-tools 5.9）可执行目标，SwiftUI + AppKit，零第三方依赖。
+
+## 许可证 / License
+
+随手贴 · StickySide 是**源码公开（Source Available）**软件，采用 [PolyForm Shield License 1.0.0](LICENSE)：
+
+- ✅ **个人与内部使用免费**——包括上班时自用、在公司内部使用、私下修改
+- ✅ 可以阅读、学习、修改源码，用于任何不与随手贴竞争的用途
+- ❌ **不得**将本软件或基于它的作品用于向第三方提供与随手贴竞争的产品或服务，包括出售、换牌发布、收费分发（免费发布的竞品同样不可以）
+- ❌ 名称、Logo 与图标不在授权范围内
+
+上述受限用途需要 DeepCarry 的书面商业授权，细则见 [LICENSE-CLARIFICATIONS.md](LICENSE-CLARIFICATIONS.md)，可通过 https://deepcarry.io 联系。
+
+StickySide is source-available software under the PolyForm Shield License 1.0.0. Personal and internal use — including use at work — is free. You may not use the software or works based on it to provide a product or service that competes with StickySide, including selling, rebranding, or charging for distribution; competing products are covered whether they are free or paid. Names, logos, and icons are not licensed. See `LICENSE` and `LICENSE-CLARIFICATIONS.md` for details.
