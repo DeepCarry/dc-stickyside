@@ -83,6 +83,34 @@ struct EditorPlaceholder: NSViewRepresentable {
     }
 }
 
+/// 占位探针的共享 60ms ticker（P2-21）：原来每个 EditorPlaceholderView 各建一个
+/// 0.06s Timer，英雄纸、详情、捕获、边缘、刘海同时开着就是 5 个轮询。
+/// 节奏不变（仍是 0.06s、.common 模式），只是 N 个实例共享 1 个计时器；
+/// 最后一个实例离开窗口时停表，不空转。NSHashTable 弱引用：实例释放后自动出组。
+@MainActor
+final class PlaceholderTicker {
+    static let shared = PlaceholderTicker()
+    private var views = NSHashTable<EditorPlaceholderView>.weakObjects()
+    private var timer: Timer?
+
+    func register(_ v: EditorPlaceholderView) {
+        views.add(v)
+        if timer == nil {
+            timer = Timer(timeInterval: 0.06, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.tick() }
+            }
+            RunLoop.main.add(timer!, forMode: .common)
+        }
+    }
+
+    func unregister(_ v: EditorPlaceholderView) {
+        views.remove(v)
+        if views.allObjects.isEmpty { timer?.invalidate(); timer = nil }
+    }
+
+    private func tick() { for v in views.allObjects { v.refresh() } }
+}
+
 @MainActor
 final class EditorPlaceholderView: NSView {
     /// 与 SwiftUI 一致：左上角为原点，占位才能按 textOrigin 直接定位
@@ -94,7 +122,6 @@ final class EditorPlaceholderView: NSView {
     private var ink = NSColor.placeholderTextColor
     private var font = AppFont.pingFang(size: 15 * FontScale.current, weight: .regular)
     private weak var textView: NSTextView?
-    private var timer: Timer?
     /// 只读给自检用：`--imetest` 会验证组合输入时它确实翻成 true
     private(set) var hasContent = false
 
@@ -116,14 +143,10 @@ final class EditorPlaceholderView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil, timer == nil else { return }
-        // 60ms：第一个拼音字母要在下一帧前把提示收掉，又不必每敲一下都刷整棵树
-        let t = Timer(timeInterval: 0.06, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh() }
-        }
-        // .common：滚动、菜单弹出时也继续跑
-        RunLoop.main.add(t, forMode: .common)
-        timer = t
+        guard window != nil else { return }
+        // 60ms：第一个拼音字母要在下一帧前把提示收掉，又不必每敲一下都刷整棵树。
+        // 计时器由 PlaceholderTicker 共享（.common 模式：滚动、菜单弹出时也继续跑）。
+        PlaceholderTicker.shared.register(self)
         refresh()
     }
 
@@ -133,12 +156,11 @@ final class EditorPlaceholderView: NSView {
     }
 
     func stop() {
-        timer?.invalidate()
-        timer = nil
+        PlaceholderTicker.shared.unregister(self)
         textView = nil
     }
 
-    private func refresh() {
+    func refresh() {
         if textView == nil { textView = Self.findTextView(near: self) }
         guard let tv = textView else { return }
         // hasMarkedText 兜底：个别输入法把组合串放在 marked range 而非 string 里

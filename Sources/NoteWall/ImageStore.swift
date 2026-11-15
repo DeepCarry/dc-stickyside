@@ -160,40 +160,63 @@ enum ImageStore {
     /// 从拖拽的 NSItemProvider 取图。两种来源都要支持：
     /// 访达里拖文件（fileURL）和浏览器里直接拖图（位图数据）。
     /// 回调统一回主线程：调用方要改 @Published 状态、要重排窗口。
+    /// 三路链式 fallback（嵌套闭包，不用 finished 标志位——标志位在三个异步回调里容易漏置）：
+    /// fileURL 读失败（如 WebP / 损坏文件）时换路重试对象 / 图片数据分支，而不是直接报 nil。
+    /// WebP 从访达拖进来能否成功，取决于本机 NSImage 是否解得了 WebP；
+    /// 本修只保证“fileURL 失败时一定换路重试”，不承诺 WebP 必成。
     static func loadImage(from provider: NSItemProvider,
                           completion: @escaping @MainActor (NSImage?) -> Void) {
         func finish(_ img: NSImage?) {
             DispatchQueue.main.async { MainActor.assumeIsolated { completion(img) } }
         }
 
-        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+        func tryFileURL() {
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
                 var url: URL?
                 if let data = item as? Data {
                     url = URL(dataRepresentation: data, relativeTo: nil)
                 } else if let u = item as? URL {
                     url = u
                 }
-                finish(url.flatMap { NSImage(contentsOf: $0) })
+                if let img = url.flatMap({ NSImage(contentsOf: $0) }) {
+                    finish(img)
+                } else {
+                    if let error { NSLog("NoteWall: 拖拽 fileURL 读图失败，fallback 到对象/数据分支：\(error.localizedDescription)") }
+                    else { NSLog("NoteWall: 拖拽 fileURL 读图失败，fallback 到对象/数据分支") }
+                    tryObject()
+                }
             }
-            return
         }
 
-        if provider.canLoadObject(ofClass: NSImage.self) {
-            _ = provider.loadObject(ofClass: NSImage.self) { obj, _ in
-                finish(obj as? NSImage)
+        func tryObject() {
+            guard provider.canLoadObject(ofClass: NSImage.self) else { tryData(); return }
+            _ = provider.loadObject(ofClass: NSImage.self) { obj, error in
+                if let img = obj as? NSImage {
+                    finish(img)
+                } else {
+                    if let error { NSLog("NoteWall: 拖拽对象分支读图失败，fallback 到数据分支：\(error.localizedDescription)") }
+                    tryData()
+                }
             }
-            return
         }
 
-        if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-            provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+        func tryData() {
+            guard provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) else { finish(nil); return }
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, error in
+                if let error { NSLog("NoteWall: 拖拽数据分支读图失败：\(error.localizedDescription)") }
                 finish(data.flatMap { NSImage(data: $0) })
             }
-            return
         }
 
-        finish(nil)
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            tryFileURL()
+        } else if provider.canLoadObject(ofClass: NSImage.self) {
+            tryObject()
+        } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+            tryData()
+        } else {
+            finish(nil)
+        }
     }
 }
 

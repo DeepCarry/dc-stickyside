@@ -24,6 +24,7 @@ enum VaultError: Error {
 ///
 /// - 密钥是 32 字节随机数，存在 `vault.key`（0600、排除出备份），**不进存档、不进 iCloud**；
 /// - 每张便签的密文用**便签 id 作为 AAD**，把 A 的密文塞给 B 会直接认证失败；
+/// - 图片密文用所在文件的文件名作 AAD、带 v1: 前缀；旧格式图片在下次锁定时自动升级为新格式，期间仍可正常解锁。
 /// - 这道锁防的是「别人翻我的文件 / 备份 / 存档预览」，不是「本机上以我的身份运行的恶意程序」。
 ///   后者只有 Secure Enclave/钥匙串生物识别才能防，而本机是 ad-hoc 签名，重新构建后钥匙串
 ///   每次都弹授权（实测过），所以没有把密钥放钥匙串。要做真正的硬件绑定，
@@ -36,6 +37,13 @@ final class Vault {
 
     private let key: SymmetricKey
     let keyID: String          // 密钥指纹（sha256 前 6 字节），用于「密钥换过了」的报警
+
+    /// 导出主密钥的 32 字节原始数据（D5 密钥备份）。密钥文件写失败时只有内存临时钥匙，
+    /// 导出它会误导用户以为备份了 durable 钥匙，此时返回 nil。
+    func exportKeyData() -> Data? {
+        guard !Self.keyWriteFailed else { return nil }
+        return key.withUnsafeBytes { Data($0) }
+    }
 
     init(persistent: Bool) {
         if persistent {
@@ -73,6 +81,9 @@ final class Vault {
 
     // MARK: 图片（原地换成密文）
 
+    /// 图片密文前缀，与正文 seal 的 "v1:" 同一约定
+    private static let imageSealedPrefix = Data("v1:".utf8)
+
     /// 先把两份密文都算出来再落盘：避免「主图已加密、缩略图没加密」的半截状态。
     /// 第二个文件写失败时把第一个文件还原成明文。
     func sealImage(_ image: NoteImage) throws {
@@ -82,10 +93,10 @@ final class Vault {
         do {
             for (name, thumb) in files {
                 let data = try Data(contentsOf: ImageStore.url(name, thumb: thumb))
-                guard let box = try? AES.GCM.seal(data, using: key),
+                guard let box = try? AES.GCM.seal(data, using: key, authenticating: Data(name.utf8)),
                       let combined = box.combined else { throw VaultError.imageFailed }
                 plain.append(data)
-                sealed.append(combined)
+                sealed.append(Self.imageSealedPrefix + combined)
             }
         } catch {
             throw VaultError.imageFailed
@@ -113,9 +124,15 @@ final class Vault {
         do {
             for (name, thumb) in files {
                 let raw = try Data(contentsOf: ImageStore.url(name, thumb: thumb))
-                let box = try AES.GCM.SealedBox(combined: raw)
                 sealed.append(raw)
-                plain.append(try AES.GCM.open(box, using: key))
+                if raw.starts(with: Self.imageSealedPrefix) {
+                    let box = try AES.GCM.SealedBox(combined: raw.dropFirst(Self.imageSealedPrefix.count))
+                    plain.append(try AES.GCM.open(box, using: key, authenticating: Data(name.utf8)))
+                } else {
+                    // 旧格式（无前缀、无 AAD）：0.3.6 之前锁的图片。原样解开，不报错。
+                    let box = try AES.GCM.SealedBox(combined: raw)
+                    plain.append(try AES.GCM.open(box, using: key))
+                }
             }
         } catch {
             throw VaultError.openFailed

@@ -178,6 +178,12 @@ enum Checklist {
         }.joined(separator: "\n")
     }
 
+    /// 待办标签才转清单，其它标签原样返回。集中收进数据层（Store.add / update 调用），
+    /// 创建与编辑走同一入口，不再各处 inline 判断。
+    static func asTodoListIfNeeded(text: String, tag: String) -> String {
+        tag == "待办" ? asTodoList(text) : text
+    }
+
     /// 这段文字里有没有可勾选的行
     static func hasItems(_ text: String) -> Bool {
         !parse(text).isEmpty

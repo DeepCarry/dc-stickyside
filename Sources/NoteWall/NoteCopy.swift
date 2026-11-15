@@ -44,17 +44,21 @@ enum NoteCopy {
         let image = note.image.flatMap { ThumbCache.shared.full($0) }
         guard hasText || image != nil else { return .nothing }
 
+        // 先算三个编码结果，再决定返回值：只认实际写进剪贴板的东西，
+        // 不认「图对象存在」——编码失败时剪贴板里没有图，就不能报“文字 + 图片”。
+        let png = image.flatMap { pngData($0) }
+        let tiff = image?.tiffRepresentation
+        let rtfd = image.flatMap { rtfdData(text: text, image: $0) }
         let item = NSPasteboardItem()
         if hasText { item.setString(text, forType: .string) }
-        if let image {
-            if let png = pngData(image) { item.setData(png, forType: .png) }
-            if let tiff = image.tiffRepresentation { item.setData(tiff, forType: .tiff) }
-            if let rtfd = rtfdData(text: text, image: image) { item.setData(rtfd, forType: .rtfd) }
-        }
+        if let png { item.setData(png, forType: .png) }
+        if let tiff { item.setData(tiff, forType: .tiff) }
+        if let rtfd { item.setData(rtfd, forType: .rtfd) }
         pb.clearContents()
         pb.writeObjects([item])
 
-        switch (hasText, image != nil) {
+        let didWriteImage = png != nil || tiff != nil || rtfd != nil
+        switch (hasText, didWriteImage) {
         case (true, true): return .textAndImage
         case (true, false): return .textOnly
         case (false, true): return .imageOnly
@@ -74,9 +78,10 @@ enum NoteCopy {
         let attachment = NSTextAttachment()
         attachment.image = image
         // 原图最长边可达 2048：不缩放直接粘进富文本会撑爆版面，按纸面宽度等比收
-        if image.size.width > 320, image.size.height > 0 {
-            let h = image.size.height * 320 / image.size.width
-            attachment.bounds = NSRect(x: 0, y: 0, width: 320, height: h)
+        if max(image.size.width, image.size.height) > 320, image.size.width > 0, image.size.height > 0 {
+            let scale = 320 / max(image.size.width, image.size.height)
+            attachment.bounds = NSRect(x: 0, y: 0,
+                width: image.size.width * scale, height: image.size.height * scale)
         }
         attr.append(NSAttributedString(attachment: attachment))
         if !text.isEmpty {

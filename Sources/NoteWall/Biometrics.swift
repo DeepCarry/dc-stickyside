@@ -19,6 +19,39 @@ enum AuthKind: Equatable {
     var available: Bool { self != .none }
 }
 
+/// 生物识别失败的原因：取消 / 被锁 / 没硬件在调用方看来不能全是一个 false。
+enum AuthFailure: String, Equatable {
+    case cancelled    // 用户点了取消（或系统取消）：不弹提示，静默失败
+    case lockedOut    // 生物识别多次失败被锁：提示改用 Mac 登录密码
+    case notAvailable // 无硬件/未录入：提示本机无法验证
+    case unknown      // 其余（含验证失败）：提示“验证失败，请再试一次”
+}
+
+/// 闲置自动重锁（D5）：只对「本次运行」策略生效。1/5/30 分钟策略已有逐张倒计时，
+/// 「每次都要验证」靠关闭即锁，闲置计时是重复建设。
+enum IdleRelockOption: String, Codable, CaseIterable, Identifiable {
+    case off, minutes15, minutes60
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .off: return "关闭"
+        case .minutes15: return "15 分钟"
+        case .minutes60: return "60 分钟"
+        }
+    }
+
+    /// nil = 关闭
+    var minutes: Int? {
+        switch self {
+        case .off: return nil
+        case .minutes15: return 15
+        case .minutes60: return 60
+        }
+    }
+}
+
 /// 解锁有效期（PRD §2.8）。默认「本次运行」：退出应用即重新上锁，
 /// 比「5 分钟」更符合便签的使用节奏——没人会为了看一张便签反复验指纹，
 /// 但也不该让明文在磁盘上躺一整天。
@@ -50,7 +83,7 @@ enum UnlockPolicy: String, Codable, CaseIterable, Identifiable {
 
     var hint: String {
         switch self {
-        case .session:   return "本次运行期间保持解锁，退出应用时重新上锁。App 常驻菜单栏时，本次运行可能持续很久，期间锁定便签保持解锁。"
+        case .session:   return "本次运行期间保持解锁，退出应用时重新上锁。App 常驻菜单栏时，本次运行可能持续很久，期间锁定便签保持解锁。闲置一段时间后也会自动上锁（见下方「闲置自动重锁」）。"
         case .everyTime: return "关掉详情页就立刻重新上锁，明文不在磁盘上多留一秒。"
         default:         return "解锁后 \(title)自动重新上锁，期间不重复验证。"
         }
@@ -62,6 +95,16 @@ enum UnlockPolicy: String, Codable, CaseIterable, Identifiable {
 protocol Authenticating {
     var kind: AuthKind { get }
     func authenticate(reason: String, completion: @escaping @MainActor (Bool) -> Void)
+}
+
+extension Authenticating {
+    /// 默认实现：旧的 Bool 入口只能分出成功/失败，失败一律映射为 .unknown。
+    /// 遵循者（BiometricGate）重写本方法给出真实原因；TestAuthenticator 不用改。
+    func authenticateDetailed(reason: String, completion: @escaping @MainActor (Result<Void, AuthFailure>) -> Void) {
+        authenticate(reason: reason) { ok in
+            completion(ok ? .success(()) : .failure(.unknown))
+        }
+    }
 }
 
 /// 系统生物识别。没有 Touch ID 的 Mac（或外接键盘合盖）退到登录密码，
@@ -87,6 +130,29 @@ struct BiometricGate: Authenticating {
             // LAContext 的回调不在主线程，UI 与 store 都在主线程上
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { completion(ok) }
+            }
+        }
+    }
+
+    /// 与 authenticate() 完全一致的策略选择，但把 LAError 的原因分出来。
+    func authenticateDetailed(reason: String, completion: @escaping @MainActor (Result<Void, AuthFailure>) -> Void) {
+        let ctx = LAContext()
+        ctx.localizedCancelTitle = "取消"
+        let policy: LAPolicy = ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+            ? .deviceOwnerAuthenticationWithBiometrics
+            : .deviceOwnerAuthentication
+        ctx.evaluatePolicy(policy, localizedReason: reason) { ok, error in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    if ok { completion(.success(())); return }
+                    let code = (error as? LAError)?.code
+                    switch code {
+                    case .userCancel, .appCancel, .systemCancel: completion(.failure(.cancelled))
+                    case .biometryLockout: completion(.failure(.lockedOut))
+                    case .biometryNotAvailable, .biometryNotEnrolled: completion(.failure(.notAvailable))
+                    default: completion(.failure(.unknown))
+                    }
+                }
             }
         }
     }
