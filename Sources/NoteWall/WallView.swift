@@ -37,6 +37,8 @@ final class WallUI: ObservableObject {
     @Published var showSearch = false
     /// 搜索浮层里的选中行（↑↓ 移动）。
     @Published var searchSelection: Int = 0
+    /// 搜索结果是否展开全部（P2-15）：默认只看前 8 条，点“查看全部”后展开到 30 条。
+    @Published var searchShowAll = false
     /// 「筛选」气泡开/关。
     @Published var showFilterPopover = false
     /// 「新建便签」/ 虚线空位点一下就 +1，英雄纸的输入区抢回焦点。
@@ -336,28 +338,40 @@ struct WallContent: View {
             // 主窗口这个 monitor 若抢先吞掉 ⌘↩，面板就永远收不到——用户按了没反应。
             guard NSApp.keyWindow === AppContext.shared.wallWindow else { return false }
 
-            // 有弹层时让位：否则在详情/设置里按 ⌘↩ 会误触发主输入区的「添加」
-            guard !ui.showDetail, !ui.showSettings, !ui.showTrash, ui.wallDialog == nil else { return false }
+            // ⌘B：折叠侧边栏（三态循环，与工具栏按钮同一动作）。
+            // 本地监视器先于菜单快捷键收到事件，返回 true 即吞掉，工具栏按钮的 ⌘B 不会重复触发；
+            // NSTextView 没有 ⌘B 默认绑定（加粗是格式菜单的命令，不是 NSTextView keyDown 的），不会抢字。
+            // 放弹层守卫之前：焦点在输入框里时也能折叠侧栏。
+            if cmd, event.keyCode == 11 {
+                store.sidebarMode = store.sidebarMode.next
+                return true
+            }
 
             // ⌘K / ⌘F：全局搜索浮层。在输入区里按也照样开——浮层接管焦点，草稿不动。
+            // 移到弹层守卫之前：详情/设置/回收站打开时也能切搜索；但新建/重命名/删除墙的
+            // 对话框有未保存输入，不可悄悄关，wallDialog 守卫保留。
+            guard ui.wallDialog == nil else { return false }
             if cmd && (event.keyCode == 40 || event.keyCode == 3) {
+                ui.showSettings = false
+                ui.showTrash = false
+                ui.showDetail = false   // 详情关闭时走 onDisappear 脏保存，不丢字
                 ui.showSearch = true
                 return true
             }
 
-            let inText = NSApp.keyWindow?.firstResponder is NSTextView
+            // 有弹层时让位：否则在详情/设置里按 ⌘↩ 会误触发主输入区的「添加」
+            guard !ui.showDetail, !ui.showSettings, !ui.showTrash else { return false }
 
-            // ⌘Z / ⌘⇧Z：文本框里的撤销归 AppKit 管，抢了会让「刚打的字撤不掉」
+            // ⌘Z / ⌘⇧Z：焦点在 NSTextView 里时还给 AppKit（原生文字撤销）；
+            // 否则走自定义结构栈。两条通道互不串扰，栈空时吞掉、不让事件继续冒泡。
             if cmd, event.keyCode == 6 {
-                guard !inText else { return false }
-                if shift {
-                    guard let t = store.redo() else { return true }
-                    ToastCenter.shared.show("已重做\(t)")
-                } else {
-                    guard let t = store.undo() else { return true }
-                    ToastCenter.shared.show("已撤销\(t)", actionTitle: "重做") { _ = store.redo() }
+                switch (shift ? store.redoRespectingFocus() : store.undoRespectingFocus()) {
+                case .passThrough: return false
+                case .done(let t):
+                    ToastCenter.shared.show(shift ? "已重做\(t)" : "已撤销\(t)", actionTitle: shift ? nil : "重做") { _ = store.redo() }
+                    return true
+                case .empty: return true
                 }
-                return true
             }
 
             if cmd, !shift, event.keyCode == 36 {           // ⌘↩
@@ -841,6 +855,18 @@ struct WallContent: View {
                     Text("状态").font(.ui(T.metaSize, .medium)).foregroundStyle(T.textDim)
                     statusFilter
                 }
+                if !store.allTags.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("标签").font(.ui(T.metaSize, .medium)).foregroundStyle(T.textDim)
+                        Picker("标签", selection: Binding(
+                            get: { store.tagFilter ?? "" },
+                            set: { store.tagFilter = $0.isEmpty ? nil : $0 })) {
+                            Text("全部").tag("")
+                            ForEach(store.allTags, id: \.self) { Text($0).tag($0) }
+                        }
+                        .pickerStyle(.menu).labelsHidden()
+                    }
+                }
             }
         }
         .padding(16)
@@ -1288,12 +1314,9 @@ struct WallContent: View {
         if let tv = NSApp.keyWindow?.firstResponder as? NSTextView, tv.hasMarkedText() {
             tv.unmarkText()
         }
-        var text = ui.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = ui.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || ui.draftImage != nil else { return }
-        // 选了「待办」：每行自动变成可勾选项，否则这个标签只是个装饰
-        if ui.tag == "待办", !text.isEmpty {
-            text = Checklist.asTodoList(text)
-        }
+        // 待办自动转清单已收进 Store.add（P2-19），这里不再 inline 判断。
         var image: NoteImage? = nil
         if let ns = ui.draftImage {
             if let saved = ImageStore.save(ns) {
