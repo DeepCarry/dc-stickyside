@@ -17,17 +17,26 @@ struct SearchPalette: View {
     @FocusState private var fieldFocused: Bool
     @State private var monitor: Any? = nil
 
-    private var results: [Note] { Self.computeResults(store: store) }
+    private var results: [Note] { Self.computeResults(store: store, showAll: ui.searchShowAll) }
 
     private var queryIsEmpty: Bool { SearchQuery.parse(store.searchText).isEmpty }
 
-    private static func computeResults(store: AppStore) -> [Note] {
+    private static func computeResults(store: AppStore, showAll: Bool) -> [Note] {
+        let limit = showAll ? 30 : 8
         let pool = store.notes.filter { $0.deletedAt == nil }
         let q = SearchQuery.parse(store.searchText)
         if q.isEmpty {
-            return Array(pool.sorted { $0.updatedAt > $1.updatedAt }.prefix(8))
+            return Array(pool.sorted { $0.updatedAt > $1.updatedAt }.prefix(limit))
         }
-        return Array(pool.filter { SearchQuery.matches($0, query: q, walls: store.walls) }.prefix(8))
+        return Array(pool.filter { SearchQuery.matches($0, query: q, walls: store.walls) }.prefix(limit))
+    }
+
+    /// 与 computeResults 同一套 pool/filter，不过 prefix：给“查看全部 N 条”算总数。
+    private static func totalCount(store: AppStore) -> Int {
+        let pool = store.notes.filter { $0.deletedAt == nil }
+        let q = SearchQuery.parse(store.searchText)
+        if q.isEmpty { return pool.count }
+        return pool.filter { SearchQuery.matches($0, query: q, walls: store.walls) }.count
     }
 
     var body: some View {
@@ -96,7 +105,20 @@ struct SearchPalette: View {
         .padding(.vertical, 13)
     }
 
+    /// showAll 分支是 ScrollView，否则是 VStack，两种类型必须由 ViewBuilder 归一（C4）。
+    @ViewBuilder
     private var resultsArea: some View {
+        if ui.searchShowAll {
+            ScrollView {
+                resultsList
+            }
+            .frame(maxHeight: 420)
+        } else {
+            resultsList
+        }
+    }
+
+    private var resultsList: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(queryIsEmpty ? "最近" : "搜索结果")
                 .font(.ui(T.metaSize, .medium))
@@ -114,6 +136,12 @@ struct SearchPalette: View {
                     resultRow(note, selected: idx == clampedSelection)
                         .onTapGesture { open(note) }
                         .onHover { if $0 { ui.searchSelection = idx } }
+                }
+                if !ui.searchShowAll, Self.totalCount(store: store) > results.count {
+                    Button("查看全部 \(Self.totalCount(store: store)) 条结果") { ui.searchShowAll = true }
+                        .font(.ui(T.metaSize))
+                        .foregroundStyle(T.accent)
+                        .frame(maxWidth: .infinity)
                 }
             }
         }
@@ -212,6 +240,7 @@ struct SearchPalette: View {
     private static func closePalette(store: AppStore, ui: WallUI) {
         store.searchText = ""
         ui.searchSelection = 0
+        ui.searchShowAll = false
         ui.showSearch = false
     }
 
@@ -221,7 +250,7 @@ struct SearchPalette: View {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak ui, weak store] event in
             guard let ui, let store, ui.showSearch else { return event }
-            let results = Self.computeResults(store: store)
+            let results = Self.computeResults(store: store, showAll: ui.searchShowAll)
             switch event.keyCode {
             case 126: // ↑
                 if !results.isEmpty {

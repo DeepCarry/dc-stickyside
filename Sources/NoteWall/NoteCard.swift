@@ -191,6 +191,8 @@ struct NoteCard: View {
     @StateObject private var menuHover = UIBox(false)
     /// 落下动画跑完的标记：只在挂载那一刻动画一次，滚动回来不重播。
     @State private var appeared = false
+    /// 键盘焦点是否在「⋯」菜单上（P2-14）：Tab 到它时也要显形，不然键盘用户永远看不到它。
+    @FocusState private var menuFocused: Bool
     private var hovering: Bool { hoverPreview || hover.value }
 
     /// 同一张便签的角度恒定：用 id 的确定性哈希映射到 -1.2°~+1.2°。
@@ -464,7 +466,7 @@ struct NoteCard: View {
                     .font(.icon(11))
                     .foregroundStyle(Color(hex: 0xB8860B).opacity(0.9))
             }
-            if hovering && !note.isLocked { menuButton }
+            if !note.isLocked { menuButton }
         }
         .padding(.top, 10)
         .padding(.trailing, 10)
@@ -475,12 +477,18 @@ struct NoteCard: View {
     @ViewBuilder
     private var menuButton: some View {
         if RenderFlags.snapshot {
-            menuLabel
+            // 快照图不变：快照分支仍按 hovering 渲染（原来 cornerCluster 的门挪到了这里）。
+            if hovering { menuLabel }
         } else {
+            // 常驻渲染 + opacity 显隐：按钮一直在视图树里，键盘 Tab 才到得了它；
+            // overlay 不占布局，常驻不顶走星标、不改变卡片布局，视觉与现版一致。
             Menu { actions } label: { menuLabel }
                 .menuStyle(.borderlessButton).handCursor()
                 .menuIndicator(.hidden)
                 .fixedSize()
+                .focused($menuFocused)
+                .opacity(hovering || menuFocused ? 1 : 0)
+                .accessibilityLabel("更多操作")
         }
     }
 

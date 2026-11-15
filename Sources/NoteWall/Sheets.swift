@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Carbon.HIToolbox
+import UniformTypeIdentifiers
 
 // MARK: - 便签详情
 
@@ -12,9 +13,16 @@ final class NoteDraftBox: ObservableObject {
 struct NoteDetailSheet: View {
     @EnvironmentObject private var store: AppStore
     @StateObject private var box: NoteDraftBox
+    /// 清单/编辑双模式的开关（P1-3）：默认打勾模式，点“编辑”切回纯文本。
+    @State private var isEditingText = false
+    /// 关详情时的脏比较基准（P2-20）：onDisappear 只在草稿真改过时写回。
+    private let original: Note
+    /// save() 已写回过：onDisappear 不再重复写回（updatedAt 会被 bump 两次，排序会抖）。
+    @State private var savedOnClose = false
     var onClose: () -> Void
 
     init(note: Note, onClose: @escaping () -> Void) {
+        self.original = note
         _box = StateObject(wrappedValue: NoteDraftBox(note))
         self.onClose = onClose
     }
@@ -27,6 +35,9 @@ struct NoteDetailSheet: View {
                 lockedBody
             } else {
                 topBar
+                if draft.isChecklist {
+                    editToggleRow
+                }
                 editor
                 if let img = draft.image, let ns = ThumbCache.shared.full(img) {
                     imageBlock(ns)
@@ -48,6 +59,14 @@ struct NoteDetailSheet: View {
             guard let fresh = notes.first(where: { $0.id == box.note.id }),
                   fresh.image?.fileName != box.note.image?.fileName else { return }
             box.note.image = fresh.image
+        }
+        .onDisappear {
+            // ⌘K 关详情时的脏保存（P2-20）：只在草稿真改过、未锁定、且 save() 没写过时写回。
+            // 详情页今天没有“关掉即保存”的路径，⌘K 关详情若不保存会丢字。
+            guard !savedOnClose, !box.note.isLocked, box.note != original else { return }
+            var n = box.note
+            n.text = Checklist.autoComplete(n.text)
+            store.update(n)
         }
     }
 
@@ -145,7 +164,28 @@ struct NoteDetailSheet: View {
         .padding(.bottom, 14)
     }
 
+    /// 清单/编辑双模式（P1-3，照抄刘海详情的交互，不发明新交互）：
+    /// 默认是可打勾的清单行，点“编辑”切回纯文本；两种模式同高 150，切换时详情页不跳尺寸。
+    @ViewBuilder
     private var editor: some View {
+        if isEditingText || !draft.isChecklist {
+            editorBody
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Checklist.parse(draft.text)) { item in
+                        checkRow(item)
+                    }
+                }
+                .padding(.top, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(height: 150)
+        }
+    }
+
+    /// 原编辑器整体搬进来：占位 + PlainTextEditor，150 高度不变。
+    private var editorBody: some View {
         ZStack(alignment: .topLeading) {
             if RenderFlags.snapshot {
                 if draft.text.isEmpty {
@@ -173,6 +213,54 @@ struct NoteDetailSheet: View {
                     .frame(height: 150)
             }
         }
+    }
+
+    /// 清单行（P1-3，照抄刘海详情 checkRow 的视觉语言：圆圈/勾选圆圈 + 文字 + 完成删除线）。
+    /// 打勾只改 box.note.text，不直接调 store.toggleCheck——详情页是草稿箱模型，
+    /// 直接调会与关闭时 save() 的 store.update(box.note) 互相覆盖（P0-2 同根因）。
+    /// 落盘唯一入口仍是 save()。
+    private func checkRow(_ item: Checklist.Item) -> some View {
+        Button { box.note.text = Checklist.toggle(box.note.text, itemID: item.id) } label: {
+            HStack(spacing: 8) {
+                Image(systemName: item.done ? "checkmark.circle.fill" : "circle")
+                    .font(.icon(15))
+                    .foregroundStyle(item.done ? draft.paper.ink : draft.paper.ink.opacity(0.35))
+                Text(item.text)
+                    .font(.ui(13.5))
+                    .foregroundStyle(item.done ? draft.paper.ink.opacity(0.45) : draft.paper.ink)
+                    .strikethrough(item.done, color: draft.paper.ink.opacity(0.45))
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).handCursor()
+    }
+
+    /// 清单/编辑模式切换（P1-3）：只在待办清单便签上出现。切换只改 isEditingText，
+    /// 不写盘、不调 save()。样式与刘海详情页脚同款胶囊：圆角 7、ink 8% 底、
+    /// 13pt 文案 + 12pt 图标。
+    private var editToggleRow: some View {
+        HStack {
+            Spacer(minLength: 0)
+            Button { isEditingText.toggle() } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: isEditingText ? "checkmark" : "pencil")
+                        .font(.icon(T.captionSize, .medium))
+                    Text(isEditingText ? "完成" : "编辑")
+                        .font(.ui(T.auxSize, .medium))
+                }
+                .foregroundStyle(draft.paper.ink.opacity(0.9))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(draft.paper.ink.opacity(0.08))
+                )
+            }
+            .buttonStyle(.plain).handCursor()
+        }
+        .padding(.bottom, 8)
     }
 
     private func imageBlock(_ ns: NSImage) -> some View {
@@ -257,6 +345,7 @@ struct NoteDetailSheet: View {
         var n = box.note
         n.text = Checklist.autoComplete(n.text)
         store.update(n)
+        savedOnClose = true
         onClose()
     }
 }
@@ -539,12 +628,22 @@ struct SettingsSheet: View {
                                       accent: !store.authenticator.kind.available)
                         }
                         policyRow
+                        idleRelockRow
                         row("已锁定", subtitle: "这些便签的正文与图片在磁盘上都是密文") {
                             valueText("\(lockedCount) 张")
                         }
                         row("加密", subtitle: "AES-GCM 256 · 主密钥 \(store.vault.keyID)",
                             showDivider: !store.keyStale) {
                             valueText("vault.key")
+                        }
+                        VStack(alignment: .leading, spacing: 0) {
+                            row("密钥备份", subtitle: "主密钥只存在本机一个文件里；删文件或换电脑后，锁定的便签打不开",
+                                showDivider: false) {
+                                Button("导出…") { exportKey() }
+                                    .buttonStyle(GhostButtonStyle(height: 24, hPad: 9)).handCursor()
+                                    .disabled(Vault.keyWriteFailed)
+                            }
+                            hint("恢复时：先退出随手贴，再把备份文件改名为 vault.key，放回数据文件夹（见下方「存储位置」），重新打开即可。不要把备份发给任何人，也不要放进网盘共享文件夹。", top: 0)
                         }
                         if store.keyStale {
                             row("主密钥已更换", subtitle: "与存档里的密文不匹配，锁定的便签暂时无法解密",
@@ -567,6 +666,21 @@ struct SettingsSheet: View {
                             Button("重置") { store.captureFrame = nil }
                                 .buttonStyle(GhostButtonStyle(height: 24, hPad: 9)).handCursor()
                                 .disabled(store.captureFrame == nil)
+                        }
+                        if !store.corruptBackups.isEmpty {
+                            ForEach(store.corruptBackups, id: \.self) { url in
+                                row("存档备份（已损坏）", subtitle: "\(url.lastPathComponent) · \(TimeLabel.card(backupDate(url)))") {
+                                    HStack(spacing: 6) {
+                                        Button("显示") {
+                                            NSWorkspace.shared.activateFileViewerSelecting([url])
+                                        }
+                                        .buttonStyle(GhostButtonStyle(height: 24, hPad: 9)).handCursor()
+                                        Button("忽略") { store.dismissCorruptBackup(url) }
+                                            .buttonStyle(GhostButtonStyle(height: 24, hPad: 9)).handCursor()
+                                    }
+                                }
+                            }
+                            hint("这是损坏前存档的原样拷贝。恢复是手动的：打开文件，把需要的文字拷出来，再新建便签贴回去。")
                         }
                         row("回收站", subtitle: "\(store.trashedNotes.count) 张便签待清理", showDivider: false) {
                             Button("清空") { confirmEmptyTrash = true }
@@ -636,6 +750,59 @@ struct SettingsSheet: View {
             }
             hint(store.unlockPolicy.hint, top: 0)
         }
+    }
+
+    /// 闲置自动重锁（D5）：只对「本次运行」策略生效。非 session 策略下整行置灰，
+    /// hint 说清原因，不让用户误以为“开了闲置重锁就万无一失”。
+    @ViewBuilder
+    private var idleRelockRow: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            row("闲置自动重锁", subtitle: "没碰随手贴多久后，把本次解锁过的便签重新锁上", showDivider: false) {
+                if RenderFlags.snapshot {
+                    menuChrome(store.idleRelock.title)
+                } else {
+                    Picker("", selection: store.bind(\.idleRelock)) {
+                        ForEach(IdleRelockOption.allCases) { opt in
+                            Text(opt.title).tag(opt)
+                        }
+                    }
+                    .pickerStyle(.menu).handCursor()
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .fixedSize()
+                }
+            }
+            .disabled(store.unlockPolicy != .session)
+            .opacity(store.unlockPolicy == .session ? 1 : 0.45)
+            hint("仅对「本次运行」生效。超过所选时间没碰过随手贴，就把本次解锁过的便签重新锁上。选了 1/5/30 分钟的便签本来就有倒计时，不用这一项。", top: 0)
+        }
+    }
+
+    /// 密钥导出（D5）：NSSavePanel 存到用户选的位置，文件 32 字节、0600 权限。
+    /// 本版只做导出 + 文字版导入说明，不做导入按钮（导入要处理“当前已有锁 + 密钥冲突”
+    /// 的分支，属于另一版的范围；手动恢复的路径已在 hint 里写死）。
+    private func exportKey() {
+        guard let data = store.vault.exportKeyData() else {
+            ToastCenter.shared.show("没有可导出的密钥（密钥文件写失败，本次运行未落盘）")
+            return
+        }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "随手贴-主密钥.key"
+        panel.allowedContentTypes = [.data]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }   // 取消 = 静默返回，不弹提示
+        do {
+            try data.write(to: url, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            ToastCenter.shared.show("密钥已导出，请保存在安全的地方")
+        } catch {
+            ToastCenter.shared.show("导出失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// 损坏备份文件的修改时间（D4）：读不出来就用现在，TimeLabel 只做展示。
+    private func backupDate(_ url: URL) -> Date {
+        (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
     }
 
     /// 下拉选择的外观。macOS 的 `borderlessButton` 菜单只剩一行字，
