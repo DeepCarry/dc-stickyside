@@ -23,10 +23,6 @@ final class CaptureModel: ObservableObject {
         tag = "灵感"
     }
 
-    var isEmpty: Bool {
-        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && image == nil
-    }
-
     var wallName: String {
         walls.first { $0.id == wallID }?.name ?? "选择墙"
     }
@@ -265,13 +261,20 @@ final class CaptureController {
     }
 
     func save() {
-        guard let store, !model.isEmpty else { close(); return }
+        // 0.3.7：与英雄纸同一个根因——输入法组字期间 model.text 还是旧值，
+        // 只信它，保存按钮会被 .disabled 锁死、⌘↩ 会直接关面板丢草稿。
+        // 面板里只有一个 NSTextView，直接读它的实时文本（组字中的拼音也在 string 里）。
+        let live = panel?.contentView.flatMap { Self.findTextView(in: $0) }?.string
+        guard let store,
+              let text = ComposerDraft.resolve(liveText: live, draft: model.text,
+                                               hasImage: model.image != nil)
+        else { close(); return }
         guard !didSave else { return }
         var noteImage: NoteImage? = nil
         if let img = model.image {
             if let saved = ImageStore.save(img) {
                 noteImage = saved
-            } else if model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            } else if text.isEmpty {
                 // 只有图、图又没存下来：没东西可存，别清空草稿（P1-10）。
                 ToastCenter.shared.show("图片保存失败")
                 return
@@ -280,7 +283,6 @@ final class CaptureController {
             }
         }
         // 待办自动转清单已收进 Store.add（P2-19），这里不再 inline 判断。
-        let text = model.text
         didSave = true
         store.add(text: text, paper: model.paper, tag: model.tag,
                   image: noteImage, wallID: model.wallID)
@@ -477,12 +479,12 @@ struct CaptureView: View {
             Text("⌘ ↩")
                 .font(.ui(T.captionSize))
                 .foregroundStyle(T.textFaint)
+            // 0.3.7：与英雄纸同理——保存按钮永不因派生状态禁用；空态由 save()
+            // 自己裁决（关面板，行为不变），组字中的草稿不再被锁在面板里。
             Button(action: onSave) {
                 Text("保存")
             }
             .buttonStyle(PillButtonStyle(bg: T.accent, fg: T.accentInk, height: 28, hPad: 16)).handCursor()
-            .disabled(model.isEmpty)
-            .opacity(model.isEmpty ? 0.5 : 1)
         }
         .padding(.top, 14)
     }
