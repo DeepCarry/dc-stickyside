@@ -395,8 +395,9 @@ final class EdgeDeckController {
         guard let store,
               let note = store.notes.first(where: { $0.id == id }),
               !note.isLocked, note.deletedAt == nil else { return }
-        // 已经抽着这张：不重来（会让 TextEditor 失焦重绘）
-        if model.phase.pulledID == id { return }
+        // 已经抽着这张：点它就是“收起”（开关语义），不再没反应像卡死。
+        // collapse() 内已含 flushSave()（0.3.5 P0-1），草稿先落盘再收起，不丢字。
+        if model.phase.pulledID == id { collapse(); return }
         // 从一张换到另一张：先把上一张的草稿写回去，别丢字
         if model.phase.isPull { flushSave() }
         collapseWork?.cancel()

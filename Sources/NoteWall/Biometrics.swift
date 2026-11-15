@@ -20,7 +20,7 @@ enum AuthKind: Equatable {
 }
 
 /// 生物识别失败的原因：取消 / 被锁 / 没硬件在调用方看来不能全是一个 false。
-enum AuthFailure: String, Equatable {
+enum AuthFailure: String, Equatable, Error {
     case cancelled    // 用户点了取消（或系统取消）：不弹提示，静默失败
     case lockedOut    // 生物识别多次失败被锁：提示改用 Mac 登录密码
     case notAvailable // 无硬件/未录入：提示本机无法验证

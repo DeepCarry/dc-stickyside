@@ -279,11 +279,8 @@ final class CaptureController {
                 ToastCenter.shared.show("图片保存失败，只保存了文字")
             }
         }
-        // 选了「待办」：每行自动变成可勾选项
-        var text = model.text
-        if model.tag == "待办" {
-            text = Checklist.asTodoList(text)
-        }
+        // 待办自动转清单已收进 Store.add（P2-19），这里不再 inline 判断。
+        let text = model.text
         didSave = true
         store.add(text: text, paper: model.paper, tag: model.tag,
                   image: noteImage, wallID: model.wallID)

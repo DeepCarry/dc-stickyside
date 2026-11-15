@@ -68,6 +68,20 @@ struct NoteWallApp: App {
         .defaultSize(width: 1180, height: 820)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            // 编辑菜单的撤销/重做（D3）：系统标准项只认 key window 的 undoManager，
+            // 焦点不在文本框时它要么灰掉、要么撤销残留的文字历史，与 ⌘Z（自定义栈）行为不一致。
+            // 这里换成结构栈的标题，菜单里能看到“将要撤销什么”。
+            // 两个 Button 刻意不挂 .keyboardShortcut——⌘Z/⇧⌘Z 的唯一入口仍是
+            // WallView.bindKeys 的本地监视器（注释原文：焦点在 TextEditor 里时命令菜单收不到按键）。
+            // 菜单项只供鼠标点按与“先看清再撤销”；点击时的路由与 bindKeys 同一个 helper，行为一致。
+            // 注意：本组只做 P1-9 的撤销菜单，不加“关于随手贴”（P2-25 进 Carry 本地批 L0，
+            // 加了会让 CI 的 --menutest 变红）。
+            CommandGroup(replacing: .undoRedo) {
+                Button("撤销\(store.undoLabel.map { " \($0)" } ?? "")") { undoFromMenu(isRedo: false) }
+                    .disabled(store.undoLabel == nil)
+                Button("重做\(store.redoLabel.map { " \($0)" } ?? "")") { undoFromMenu(isRedo: true) }
+                    .disabled(store.redoLabel == nil)
+            }
             CommandMenu("字体") {
                 // 只留一个「放大字体」入口（⌘+）：菜单里出现两次是 bug。
                 // macOS 上 ⌘= 同样触发 ⌘+ 的菜单项（AppKit 把 +/= 视作同一快捷键），
@@ -82,6 +96,23 @@ struct NoteWallApp: App {
                 Text("当前 \(Int((store.fontScale * 100).rounded()))%")
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    /// 编辑菜单点按的撤销/重做（D3）：与 bindKeys 同一个 helper。
+    /// .passThrough（焦点在 NSTextView 里）时直接调该编辑器的 undoManager；
+    /// .done 时同款 Toast；.empty 时不做事（按钮已 disabled，防御而已）。
+    private func undoFromMenu(isRedo: Bool) {
+        switch isRedo ? store.redoRespectingFocus() : store.undoRespectingFocus() {
+        case .passThrough:
+            if let tv = NSApp.keyWindow?.firstResponder as? NSTextView {
+                if isRedo { tv.undoManager?.redo() } else { tv.undoManager?.undo() }
+            }
+        case .done(let title):
+            ToastCenter.shared.show(isRedo ? "已重做\(title)" : "已撤销\(title)",
+                                    actionTitle: isRedo ? nil : "重做") { _ = store.redo() }
+        case .empty:
+            break
         }
     }
 }
@@ -120,6 +151,10 @@ struct WindowAccessor: NSViewRepresentable {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
+    /// 闲置活动监视器（D5）：不保留会被释放，监视器静默失效。
+    private var activityMonitor: Any? = nil
+    /// 回收站每小时清理计时器（P2-17）：不保留会被释放。
+    private var trashPurgeTimer: Timer? = nil
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -160,6 +195,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         installStatusItem()
+
+        // 闲置自动重锁的活动监视器（D5）：只记活动、不拦截输入，原样放行。
+        // 本地监视器只收本 App 的事件——闲置 = 没碰过随手贴，在别的 App 里干活不算在用。
+        // 不含 .mouseMoved：移动鼠标不算操作，且高频事件没必要进计时器。
+        // 与 KeyMonitor 的本地监视器并存：两者都原样放行，安装顺序不影响行为。
+        activityMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .keyDown, .scrollWheel]) { event in
+            AppContext.shared.store.noteUserActivity()
+            return event
+        }
+
+        // 回收站过期清理（P2-17）：每小时跑一次（过滤全量 notes 一次，成本可忽略）。
+        // purgeExpiredTrash 本身只在有过期项时才 saveNow()，无过期时零写盘。
+        // Timer 默认 .default mode，菜单/模态期间不触发——对每小时一次的家务活可接受。
+        // 启动清理（Store.init 内）保留不动，两者互补。
+        trashPurgeTimer = Timer(timeInterval: 3600, repeats: true) { _ in
+            let n = AppContext.shared.store.purgeExpiredTrash()
+            if n > 0 { NSLog("NoteWall: 回收站过期清理，删除 \(n) 张") }
+        }
+        RunLoop.main.add(trashPurgeTimer!, forMode: .common)
+
         NotchController.shared.install(store: store)
         EdgeDeckController.shared.attach(store: store)
 
