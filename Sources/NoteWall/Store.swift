@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import AppKit
 
 // MARK: - 磁盘位置
 
@@ -67,6 +68,8 @@ struct Archive: Codable {
     var neatMode: Bool? = nil
     // 0.3.5：字号缩放倍率（0.85–1.30）。Optional，见上面注释。
     var fontScale: Double? = nil
+    // 0.3.6：闲置自动重锁（D5）。Optional，见上面注释。
+    var idleRelock: IdleRelockOption? = nil
 }
 
 // MARK: - Store
@@ -89,7 +92,13 @@ final class AppStore: ObservableObject {
 
     /// 解锁后多久自动重新上锁
     @Published var unlockPolicy: UnlockPolicy = .session {
-        didSet { scheduleSave(); rescheduleRelocks() }
+        didSet { scheduleSave(); rescheduleRelocks(); rescheduleIdleRelock() }
+    }
+
+    /// 闲置自动重锁（D5）：默认 15 分钟无操作重锁。只对「本次运行」策略生效——
+    /// 1/5/30 分钟策略已有逐张倒计时，「每次都要验证」靠关闭即锁。
+    @Published var idleRelock: IdleRelockOption = .minutes15 {
+        didSet { scheduleSave(); rescheduleIdleRelock() }
     }
 
     /// 全局快捷键。真正生效与否以 HotKeyCenter 的注册结果为准：
@@ -174,6 +183,11 @@ final class AppStore: ObservableObject {
     var authenticator: Authenticating = BiometricGate()
     /// 存档里的密文不是用当前密钥加密的（密钥文件被删/换过）
     @Published private(set) var keyStale = false
+    /// 损坏存档的备份文件（运行时态，不落盘）。load() 的 catch 分支当场追加，
+    /// init 再扫描磁盘补齐历史备份，按修改时间倒序。
+    @Published private(set) var corruptBackups: [URL] = []
+    /// 存档损坏且备份也失败（磁盘满/权限问题）：启动提示改文案，不撒谎。
+    @Published private(set) var corruptRebuildWithoutBackup: Bool = false
     /// 本次运行内解过锁的便签：退出时会重新锁上，明文不留在磁盘上过夜
     private(set) var unlockedThisSession: Set<UUID> = []
 
@@ -186,6 +200,8 @@ final class AppStore: ObservableObject {
 
     // MARK: 解锁计时
     private var relockTimers: [UUID: DispatchWorkItem] = [:]
+    /// 闲置重锁计时（D5）。只在 session 策略 + 有本次解锁过的便签时排。
+    private var idleRelockWork: DispatchWorkItem? = nil
 
     // MARK: 载入 / 保存
 
@@ -195,6 +211,17 @@ final class AppStore: ObservableObject {
         if inMemory { didSeed = true; return }
         Paths.ensure()
         load()
+        scanCorruptBackups()
+        // 损坏存档的启动提示（D4）：只报一次（init 内消费，与 P0-6 的旗子消费同一模式）。
+        // 备份文件在，恢复是手动的——给文件、给路径、给说明，不承诺自动修复。
+        if !corruptBackups.isEmpty {
+            ToastCenter.shared.show("旧存档已损坏，已重建为空白墙", actionTitle: "在访达中显示", seconds: 6) { [weak self] in
+                guard let self else { return }
+                NSWorkspace.shared.activateFileViewerSelecting(self.corruptBackups)
+            }
+        } else if corruptRebuildWithoutBackup {
+            ToastCenter.shared.show("旧存档已损坏且无法备份，已重建为空白墙", seconds: 6)
+        }
         // 密钥出过问题（P0-6）：损坏重建 / 写失败都要明说，旧锁定便签打不开是有原因的。
         // 只报一次：消费完清掉旗子，免得预览/重建时重复弹。
         if Vault.keyRegenerated {
@@ -277,6 +304,7 @@ final class AppStore: ObservableObject {
             neatMode = a.neatMode ?? true
             fontScale = a.fontScale.map { CGFloat($0) } ?? 1.0
             FontScale.current = fontScale
+            idleRelock = a.idleRelock ?? .minutes15
             if let f = a.captureFrame, f.count == 4 {
                 captureFrame = CGRect(x: f[0], y: f[1], width: f[2], height: f[3])
             }
@@ -289,10 +317,15 @@ final class AppStore: ObservableObject {
             }
             if walls.isEmpty { seedIfNeeded() }
         } catch {
-            // 存档损坏：备份后重建，绝不静默丢数据
+            // 存档损坏：备份后重建为空白墙，绝不静默丢数据，也不再撒种子覆盖。
             let bak = Paths.support.appendingPathComponent("store.corrupt-\(Int(Date().timeIntervalSince1970)).json")
-            try? FileManager.default.copyItem(at: Paths.storeFile, to: bak)
-            seedIfNeeded()
+            if (try? FileManager.default.copyItem(at: Paths.storeFile, to: bak)) != nil {
+                corruptBackups.insert(bak, at: 0)
+            } else {
+                corruptRebuildWithoutBackup = true
+                NSLog("NoteWall: 存档损坏且备份失败")
+            }
+            rebuildAfterCorruption()
         }
     }
 
@@ -329,6 +362,7 @@ final class AppStore: ObservableObject {
         a.viewMode = viewMode
         a.neatMode = neatMode
         a.fontScale = Double(fontScale)
+        a.idleRelock = idleRelock
         if let f = captureFrame {
             a.captureFrame = [Double(f.origin.x), Double(f.origin.y),
                               Double(f.size.width), Double(f.size.height)]
@@ -357,6 +391,38 @@ final class AppStore: ObservableObject {
         saveNow()
     }
 
+    /// 损坏重建（D4）：建一面空墙，不撒种子。种子只在全新安装时出现——
+    /// load() 成功路径的 `if walls.isEmpty { seedIfNeeded() }` 保持原样。
+    private func rebuildAfterCorruption() {
+        walls = [Wall(name: "我的便签", sortOrder: 0, isDefault: true)]
+        notes = []
+        didSeed = true
+        saveNow()
+    }
+
+    /// 扫描磁盘上的损坏存档备份，按修改时间倒序。init 内调用，
+    /// 补齐上次启动留下、用户还没处理的备份；本次 catch 追加的也在磁盘上，不会丢。
+    private func scanCorruptBackups() {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: Paths.support,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]) else { return }
+        let dated = files.compactMap { url -> (URL, Date)? in
+            guard url.lastPathComponent.hasPrefix("store.corrupt-"),
+                  url.pathExtension == "json" else { return nil }
+            let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey])
+                .contentModificationDate) ?? .distantPast
+            return (url, date)
+        }
+        corruptBackups = dated.sorted { $0.1 > $1.1 }.map(\.0)
+    }
+
+    /// 忽略一条损坏备份：进废纸篓而非直接删，可反悔。成功后才从列表里拿掉。
+    func dismissCorruptBackup(_ url: URL) {
+        guard (try? FileManager.default.trashItem(at: url, resultingItemURL: nil)) != nil else { return }
+        corruptBackups.removeAll { $0 == url }
+    }
+
     /// 供调试与「重置」使用
     func clearSamples() {
         notes.removeAll { $0.createdAt > Date().addingTimeInterval(-60) && !$0.hasContent }
@@ -371,7 +437,9 @@ final class AppStore: ObservableObject {
         guard !trimmed.isEmpty || image != nil else { return nil }
         let target = wallID ?? selectedWallID ?? walls.first?.id ?? ensureDefaultWall().id
         let maxOrder = notes.map(\.sortOrder).max() ?? 0
-        var note = Note(wallID: target, text: trimmed, paper: paper, tag: tag)
+        // 待办自动转清单（P2-19）：收进数据层，创建与编辑走同一入口。
+        let converted = Checklist.asTodoListIfNeeded(text: trimmed, tag: tag)
+        var note = Note(wallID: target, text: converted, paper: paper, tag: tag)
         note.image = image
         note.sortOrder = maxOrder + 100
         notes.append(note)
@@ -386,7 +454,20 @@ final class AppStore: ObservableObject {
             self.lastAddedID = nil
         }
         saveNow()
+        // 撤销“新建” = 软删除进回收站（不是 deleteForever，图片文件不删，可恢复）。
+        // 闭包里只调不入栈的 setDeleted + 直接改字段，不调会入栈的 delete()。
+        pushUndo(UndoStep(title: "新建便签",
+                          undo: { [weak self] in self?.undoAdd(addedID) },
+                          redo: { [weak self] in self?.setDeleted(addedID, false) }))
         return note
+    }
+
+    /// 撤销新建的反操作：软删除进回收站，同时清 recentCaptures 与 lastAddedID
+    ///（与 delete() 的清理一致）。
+    private func undoAdd(_ id: UUID) {
+        setDeleted(id, true)
+        recentCaptures.removeAll { $0 == id }
+        if lastAddedID == id { lastAddedID = nil }
     }
 
     /// 胶囊行里的 ×：只是把这张从「刚捕捉」那排拿掉，墙上的便签不动。
@@ -397,6 +478,8 @@ final class AppStore: ObservableObject {
     func update(_ note: Note) {
         guard let i = notes.firstIndex(where: { $0.id == note.id }) else { return }
         var n = note
+        // 待办自动转清单（P2-19）：详情/边缘/刘海三路写回的唯一入口。
+        n.text = Checklist.asTodoListIfNeeded(text: n.text, tag: n.tag)
         n.updatedAt = Date()
         // 添加时间永不改写（PRD AC-11）
         n.createdAt = notes[i].createdAt
@@ -411,14 +494,41 @@ final class AppStore: ObservableObject {
 
     func toggleCheck(noteID: UUID, itemID: Int) {
         guard let i = notes.firstIndex(where: { $0.id == noteID }) else { return }
-        notes[i].text = Checklist.toggle(notes[i].text, itemID: itemID)
+        let oldText = notes[i].text
+        let newText = Checklist.toggle(oldText, itemID: itemID)
+        // itemID 越界时全文不变：不入栈、不 bump updatedAt，⌘Z 不会撤销一次“什么都没发生”。
+        guard oldText != newText else { return }
+        notes[i].text = newText
+        notes[i].updatedAt = Date()
+        pushUndo(UndoStep(title: "切换清单勾选",
+                          undo: { [weak self] in self?.applyText(noteID, oldText) },
+                          redo: { [weak self] in self?.applyText(noteID, newText) }))
+        saveNow()
+    }
+
+    /// 打勾撤销的写回入口（不入栈，写回 + updatedAt + 落盘）。update() 本身不改，
+    /// 仍是详情/边缘/刘海的写回入口。
+    private func applyText(_ id: UUID, _ text: String) {
+        guard let i = notes.firstIndex(where: { $0.id == id }) else { return }
+        notes[i].text = text
         notes[i].updatedAt = Date()
         saveNow()
     }
 
     func togglePin(_ id: UUID) {
         guard let i = notes.firstIndex(where: { $0.id == id }) else { return }
+        let old = notes[i].isPinned
         notes[i].isPinned.toggle()
+        let new = notes[i].isPinned
+        pushUndo(UndoStep(title: new ? "置顶" : "取消置顶",
+                          undo: { [weak self] in self?.applyPin(id, old) },
+                          redo: { [weak self] in self?.applyPin(id, new) }))
+        saveNow()
+    }
+
+    private func applyPin(_ id: UUID, _ pinned: Bool) {
+        guard let i = notes.firstIndex(where: { $0.id == id }) else { return }
+        notes[i].isPinned = pinned
         saveNow()
     }
 
@@ -426,7 +536,18 @@ final class AppStore: ObservableObject {
     /// 两件事不互相代替——参考图的侧栏同时有「收藏」和图钉，就是这个意思。
     func toggleFavorite(_ id: UUID) {
         guard let i = notes.firstIndex(where: { $0.id == id }) else { return }
-        notes[i].isFavorite = !(notes[i].isFavorite ?? false)
+        let old = notes[i].isFavorite ?? false
+        notes[i].isFavorite = !old
+        let new = !old
+        pushUndo(UndoStep(title: new ? "收藏" : "取消收藏",
+                          undo: { [weak self] in self?.applyFavorite(id, old) },
+                          redo: { [weak self] in self?.applyFavorite(id, new) }))
+        saveNow()
+    }
+
+    private func applyFavorite(_ id: UUID, _ favorite: Bool) {
+        guard let i = notes.firstIndex(where: { $0.id == id }) else { return }
+        notes[i].isFavorite = favorite
         saveNow()
     }
 
@@ -484,6 +605,9 @@ final class AppStore: ObservableObject {
 
     func restore(_ id: UUID) {
         setDeleted(id, false)
+        pushUndo(UndoStep(title: "恢复便签",
+                          undo: { [weak self] in self?.setDeleted(id, true) },
+                          redo: { [weak self] in self?.setDeleted(id, false) }))
     }
 
     func deleteForever(_ id: UUID) {
@@ -530,6 +654,28 @@ final class AppStore: ObservableObject {
     }
 
     // MARK: 撤销
+
+    /// 焦点感知的撤销结果：焦点在 NSTextView 里时必须把按键还给 AppKit，
+    /// 不可吞——文字编辑走原生 undo，结构操作走自定义栈，两条通道互不串扰。
+    enum FocusUndoOutcome {
+        case passThrough   // 焦点在 NSTextView 里：调用方必须把按键事件还给 AppKit，不可吞
+        case done(String)  // 已执行一次结构撤销/重做，关联值为步骤标题，供 Toast
+        case empty         // 栈空，无事可做
+    }
+
+    /// 焦点在 NSTextView 里（包括搜索框的 field editor）时返回 .passThrough；
+    /// 否则按现有 undo() 执行，有步骤返回 .done(title)，栈空返回 .empty。
+    func undoRespectingFocus() -> FocusUndoOutcome {
+        if let responder = NSApp.keyWindow?.firstResponder, responder is NSTextView { return .passThrough }
+        if let title = undo() { return .done(title) }
+        return .empty
+    }
+
+    func redoRespectingFocus() -> FocusUndoOutcome {
+        if let responder = NSApp.keyWindow?.firstResponder, responder is NSTextView { return .passThrough }
+        if let title = redo() { return .done(title) }
+        return .empty
+    }
 
     private func pushUndo(_ step: UndoStep) {
         undoStack.append(step)
@@ -641,9 +787,24 @@ final class AppStore: ObservableObject {
             completion(false)
             return
         }
-        authenticator.authenticate(reason: "解锁这张便签") { [weak self] ok in
-            guard let self, ok else { completion(false); return }
-            completion(self.performUnlock(id, payload: payload))
+        authenticator.authenticateDetailed(reason: "解锁这张便签") { [weak self] result in
+            guard let self else { completion(false); return }
+            switch result {
+            case .success:
+                completion(self.performUnlock(id, payload: payload))
+            case .failure(.cancelled):
+                // 用户点了取消：不弹提示，静默失败
+                completion(false)
+            case .failure(.lockedOut):
+                ToastCenter.shared.show("Touch ID 已锁定，请改用 Mac 登录密码再试一次")
+                completion(false)
+            case .failure(.notAvailable):
+                ToastCenter.shared.show("这台 Mac 上无法验证身份（没有 Touch ID，也没设登录密码）")
+                completion(false)
+            case .failure(.unknown):
+                ToastCenter.shared.show("验证失败，请再试一次")
+                completion(false)
+            }
         }
     }
 
@@ -687,8 +848,34 @@ final class AppStore: ObservableObject {
         _ = sealNote(at: i, force: true)
     }
 
+    /// 有用户活动就重排闲置计时；其余情况（已关闭 / 非 session 策略 / 无已解锁便签）
+    /// 取消计时——与 rescheduleIdleRelock 同一逻辑。
+    func noteUserActivity() {
+        rescheduleIdleRelock()
+    }
+
+    /// 只在 session 策略 + 有本次解锁过的便签时排一个 m 分钟后的计时；
+    /// 其余情况取消计时。performUnlock 成功后与 unlockPolicy 切换时都要调。
+    func rescheduleIdleRelock() {
+        idleRelockWork?.cancel()
+        idleRelockWork = nil
+        guard let m = idleRelock.minutes, unlockPolicy == .session,
+              !unlockedThisSession.isEmpty else { return }
+        let item = DispatchWorkItem { [weak self] in self?.fireIdleRelock() }
+        idleRelockWork = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(m * 60), execute: item)
+    }
+
+    private func fireIdleRelock() {
+        relockSessionNotes()
+        ToastCenter.shared.show("已闲置 \(idleRelock.title)，锁定的便签已重新上锁")
+    }
+
     /// 退出前把本次会话解过锁的便签重新封上：明文不在磁盘上过夜。
     func relockSessionNotes() {        guard !unlockedThisSession.isEmpty else { return }
+        // 锁都上完了，闲置计时器无事可做，取消它。
+        idleRelockWork?.cancel()
+        idleRelockWork = nil
         for id in Array(unlockedThisSession) {
             guard let i = notes.firstIndex(where: { $0.id == id }) else { continue }
             _ = sealNote(at: i, force: false, save: false)
@@ -740,6 +927,7 @@ final class AppStore: ObservableObject {
             notes[i] = n
             unlockedThisSession.insert(id)
             scheduleRelock(id)
+            rescheduleIdleRelock()
             saveNow()
             return true
         } catch {
@@ -1020,7 +1208,9 @@ final class AppStore: ObservableObject {
 
     var allTags: [String] {
         let set = Set(notes.filter { $0.deletedAt == nil && !$0.isLocked }.map(\.tag).filter { !$0.isEmpty })
-        return ["想法", "灵感", "待办", "资料", "参考"].filter { set.contains($0) }
+        let known = ["想法", "灵感", "待办", "资料", "参考"]
+        let extra = set.subtracting(known).sorted()
+        return known.filter { set.contains($0) } + extra
     }
 
     func count(for wallID: UUID?) -> Int {
