@@ -52,9 +52,9 @@ enum IdleRelockOption: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-/// 解锁有效期（PRD §2.8）。默认「本次运行」：退出应用即重新上锁，
-/// 比「5 分钟」更符合便签的使用节奏——没人会为了看一张便签反复验指纹，
-/// 但也不该让明文在磁盘上躺一整天。
+/// 解锁有效期（PRD §2.8）。默认「每次都要验证」：像保险箱一样，
+/// 关掉详情页就立刻重新上锁，看一次验一次——墙上凡是锁着的，就是锁着的。
+/// Touch ID 一次验证不到一秒；想回到会话解锁，随时可以在设置里改回「本次运行」。
 enum UnlockPolicy: String, Codable, CaseIterable, Identifiable {
     case session, minutes1, minutes5, minutes30, everyTime
 

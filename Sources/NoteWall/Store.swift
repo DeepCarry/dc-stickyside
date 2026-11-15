@@ -91,7 +91,7 @@ final class AppStore: ObservableObject {
     @Published var captureFrame: CGRect? = nil { didSet { scheduleSave() } }
 
     /// 解锁后多久自动重新上锁
-    @Published var unlockPolicy: UnlockPolicy = .session {
+    @Published var unlockPolicy: UnlockPolicy = .everyTime {
         didSet { scheduleSave(); rescheduleRelocks(); rescheduleIdleRelock() }
     }
 
@@ -291,7 +291,7 @@ final class AppStore: ObservableObject {
             paperFilter.papers = Set(a.paperFilter ?? [])
             timeFilter = a.timeFilter ?? .any
             statusFilter = a.statusFilter ?? .all
-            unlockPolicy = a.unlockPolicy ?? .session
+            unlockPolicy = a.unlockPolicy ?? .everyTime
             hotkeys = a.hotkeys ?? .standard
             edgeEnabled = a.edgeEnabled ?? true
             edgeSide = a.edgeSide ?? .right
@@ -379,13 +379,31 @@ final class AppStore: ObservableObject {
         walls = [wall]
         notes = [
             Note(wallID: wall.id,
-                 text: "一句话也能贴，一张图也能贴，\n文字和图片可以同时在一张便签上。",
+                 text: "欢迎使用随手贴\n这是你的第一张便签。灵感、待办、临时要用的东西，都可以贴在这里。",
                  paper: .yellow, tag: "灵感",
-                 createdAt: Date().addingTimeInterval(-20)),
+                 createdAt: Date().addingTimeInterval(-10), updatedAt: Date().addingTimeInterval(-10),
+                 isPinned: true),
             Note(wallID: wall.id,
-                 text: "点一下方框就能打勾\n- [ ] 试试勾选这一行\n- [x] 勾完不会沉底",
+                 text: "三秒上手\n⌥Space 随时记，⇧⌘Space 打开便签墙。两个快捷键，都能在设置里改。",
+                 paper: .blue, tag: "资料",
+                 createdAt: Date().addingTimeInterval(-20), updatedAt: Date().addingTimeInterval(-20)),
+            Note(wallID: wall.id,
+                 text: "新手任务\n- [x] 按 ⌥Space 记下第一条\n- [ ] 换一张喜欢的纸色\n- [ ] 把这张便签置顶",
                  paper: .mint, tag: "待办",
-                 createdAt: Date().addingTimeInterval(-10))
+                 createdAt: Date().addingTimeInterval(-30), updatedAt: Date().addingTimeInterval(-30)),
+            Note(wallID: wall.id,
+                 text: "贴在手边\n屏幕边缘、刘海、菜单栏——不用打开 App，便签就在眼前。",
+                 paper: .purple, tag: "想法",
+                 createdAt: Date().addingTimeInterval(-40), updatedAt: Date().addingTimeInterval(-40)),
+            Note(wallID: wall.id,
+                 text: "一键复制整张\n点卡片菜单「复制便签」，文字和图片整张带走，粘贴到任何地方。",
+                 paper: .cream, tag: "资料",
+                 createdAt: Date().addingTimeInterval(-50), updatedAt: Date().addingTimeInterval(-50)),
+            Note(wallID: wall.id,
+                 text: "一句话\n工具要轻，轻到不打断想法本身。",
+                 paper: .yellow, tag: "灵感",
+                 createdAt: Date().addingTimeInterval(-60), updatedAt: Date().addingTimeInterval(-60),
+                 isFavorite: true)
         ]
         didSeed = true
         saveNow()
@@ -480,6 +498,12 @@ final class AppStore: ObservableObject {
         var n = note
         // 待办自动转清单（P2-19）：详情/边缘/刘海三路写回的唯一入口。
         n.text = Checklist.asTodoListIfNeeded(text: n.text, tag: n.tag)
+        // 脏检查：三路写回共用这一个入口，只看不改时不 bump updatedAt、不落盘。
+        // 比较在 asTodoListIfNeeded 归一化之后做，只比用户可改的字段（toggleCheck
+        // 已有的「全文不变不 bump」模式）；updatedAt、deletedAt、锁字段不参与比较。
+        guard n.text != notes[i].text || n.paper != notes[i].paper || n.tag != notes[i].tag
+            || n.image != notes[i].image || n.isPinned != notes[i].isPinned
+            || n.favorite != notes[i].favorite || n.wallID != notes[i].wallID else { return }
         n.updatedAt = Date()
         // 添加时间永不改写（PRD AC-11）
         n.createdAt = notes[i].createdAt
@@ -781,9 +805,23 @@ final class AppStore: ObservableObject {
 
     /// 解锁必须过 Touch ID：验证失败就保持密文，绝不「拒了也给你看」。
     func unlock(_ id: UUID, completion: @escaping @MainActor (Bool) -> Void = { _ in }) {
-        guard let n = notes.first(where: { $0.id == id }),
-              n.isLocked, let payload = n.lockPayload,
-              authenticator.kind.available else {
+        guard let n = notes.first(where: { $0.id == id }) else {
+            NSLog("NoteWall: 解锁拒绝：便签不存在")
+            completion(false)
+            return
+        }
+        guard n.isLocked else {
+            NSLog("NoteWall: 解锁拒绝：便签未锁定")
+            completion(false)
+            return
+        }
+        guard let payload = n.lockPayload else {
+            NSLog("NoteWall: 解锁拒绝：便签无密文")
+            completion(false)
+            return
+        }
+        guard authenticator.kind.available else {
+            NSLog("NoteWall: 解锁拒绝：验证方式不可用")
             completion(false)
             return
         }
@@ -791,17 +829,22 @@ final class AppStore: ObservableObject {
             guard let self else { completion(false); return }
             switch result {
             case .success:
+                NSLog("NoteWall: 解锁成功")
                 completion(self.performUnlock(id, payload: payload))
             case .failure(.cancelled):
                 // 用户点了取消：不弹提示，静默失败
+                NSLog("NoteWall: 解锁失败：用户取消")
                 completion(false)
             case .failure(.lockedOut):
+                NSLog("NoteWall: 解锁失败：Touch ID 已锁定")
                 ToastCenter.shared.show("Touch ID 已锁定，请改用 Mac 登录密码再试一次")
                 completion(false)
             case .failure(.notAvailable):
+                NSLog("NoteWall: 解锁失败：验证方式不可用")
                 ToastCenter.shared.show("这台 Mac 上无法验证身份（没有 Touch ID，也没设登录密码）")
                 completion(false)
             case .failure(.unknown):
+                NSLog("NoteWall: 解锁失败：原因未知")
                 ToastCenter.shared.show("验证失败，请再试一次")
                 completion(false)
             }

@@ -42,6 +42,18 @@ struct SidebarView: View {
 
     // MARK: 品牌头
 
+    /// 品牌图标：尺寸在容器层级锁死——28×28，圆角 6。
+    /// Rail 下 label 里只剩图标一个元素时，裸 `.resizable().frame(28)` 压不住
+    /// AppIcon 的固有尺寸（实测渲到约 128pt），所以这里补 `.aspectRatio(.fit)`，
+    /// 让图标按拟合方式吃满 28×28 的框。
+    private var brandIcon: some View {
+        Image(nsImage: NSApp.applicationIconImage)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 28, height: 28)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
     /// 整个品牌头是一个真实菜单：切墙 + 新建墙。⌄ 不是装饰——
     /// 只有一个工作区还挂个切换箭头，那就是假控件（v7 的教训）。
     private var brandHeader: some View {
@@ -55,12 +67,16 @@ struct SidebarView: View {
                 ui.wallDialog = .create
             }
         } label: {
-            HStack(spacing: 10) {
-                Image(nsImage: NSApp.applicationIconImage)
-                    .resizable()
-                    .frame(width: 28, height: 28)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                if !isRail {
+            if isRail {
+                // Rail 下 label 就是图标本体：不再加 8pt 横向内边距（54pt 栏
+                // 内容宽只有 40pt，28 + 16 = 44pt 已溢出），横向占满栏宽居中。
+                brandIcon
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+            } else {
+                HStack(spacing: 10) {
+                    brandIcon
                     VStack(alignment: .leading, spacing: 1) {
                         Text("随手贴")
                             .font(.ui(14.5, .bold))
@@ -74,10 +90,10 @@ struct SidebarView: View {
                         .font(.icon(10, .semibold))
                         .foregroundStyle(T.textFaint)
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

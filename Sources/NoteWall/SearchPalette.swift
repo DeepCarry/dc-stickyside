@@ -227,7 +227,13 @@ struct SearchPalette: View {
             // 锁着的便签走解锁流程，不直接打开一个空详情页（与卡片点一下的行为一致）。
             store.unlock(note.id) { ok in
                 guard let fresh = store.notes.first(where: { $0.id == note.id }) else { return }
-                guard ok || store.keyStale else { return }
+                guard UnlockPresentation.shouldOpenDetail(unlockOK: ok, isLocked: fresh.isLocked) else {
+                    if store.keyStale {
+                        // 文案复用详情页 lockedBody 里 keyStale 那行，不新写。
+                        ToastCenter.shared.show("内容已无法解密：主密钥换过了。")
+                    }
+                    return
+                }
                 ui.editing = fresh
                 ui.showDetail = true
             }
