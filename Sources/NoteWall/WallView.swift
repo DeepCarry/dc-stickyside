@@ -410,8 +410,10 @@ struct WallContent: View {
 
     // MARK: 标题行与搜索
 
-    /// 标题行：视图名 + 副标题（左），搜索按钮 + 新建按钮（右）。
+    /// 标题行：视图名 + 副标题（左），搜索按钮（右）。
     /// 搜索不是一个常驻输入框：点一下开 ⌘K 浮层（ChatGPT 的做法），平时不占地方。
+    /// 工具栏「新建便签」按钮已在 0.3.8 删掉（B 方案）：它只聚焦、不创建，与「记下来」重复；
+    /// 入口剩英雄纸与 ⌥Space 两个。
     private var titleRow: some View {
         HStack(alignment: .bottom, spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
@@ -424,7 +426,6 @@ struct WallContent: View {
             }
             Spacer(minLength: 12)
             searchButton
-            newNoteButton
         }
         .padding(.bottom, 14)
     }
@@ -461,35 +462,6 @@ struct WallContent: View {
         .buttonStyle(.plain)
         .handCursor()
         .help("搜索便签 (⌘K / ⌘F)")
-    }
-
-    /// 一个动作、三个入口之一：工具栏按钮（一直够得着）。点它把焦点抢回英雄纸，
-    /// 并给英雄纸一个 0.9s 的描边脉冲——焦点已在纸上时也有可见反馈（P1-5）。
-    /// 注意：草稿非空时只聚焦、不清空，绝不丢字；真「新建」语义等 D1 定。
-    private var newNoteButton: some View {
-        Button {
-            ui.focusComposerToken += 1
-            pulseComposer()
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "plus")
-                    .font(.icon(12, .bold))
-                Text("新建便签")
-                    .font(.ui(13, .bold))
-            }
-            .foregroundStyle(T.ctaFg)
-            .padding(.horizontal, 16)
-            .frame(height: 30)
-            .background(
-                Capsule()
-                    .fill(T.ctaBg)
-                    .overlay(Capsule().strokeBorder(T.ctaEdge, lineWidth: 1))
-                    .shadow(color: T.ctaEdge.opacity(0.3), radius: 3, y: 2)
-            )
-        }
-        .buttonStyle(.plain)
-        .handCursor()
-        .help("在英雄纸上开始写一条新便签")
     }
 
     // MARK: 墙

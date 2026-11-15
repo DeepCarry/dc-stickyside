@@ -145,11 +145,6 @@ enum T {
     // 主按钮（浅色下是米黄纸配深褐字，深色下是暗金配浅金）
     static let pillBg = Color.dyn(0xEFE4C6, 0x2A2718)
     static let pillFg = Color.dyn(0x4A3A12, 0xF7EDCB)
-    /// 「新建便签」按钮：浅色沿用原来的亮金，深色改暗金底 + 浅金字，不再刺眼。
-    static let ctaBg = Color.dyn(0xFFD84D, 0x8A6D1B)
-    static let ctaEdge = Color.dyn(0xE3B800, 0xC9A227)
-    static let ctaFg = Color.dyn(0x3A2E00, 0xFFF3C4)
-
     // 便签卡片：浅色底上白纸要有一条边，阴影也要轻，否则整页发灰
     static let cardEdge   = Color.dyn(0x000000, 0xFFFFFF, lightAlpha: 0.055, darkAlpha: 0.22)
     static let cardShadow = Color.dyn(0x000000, 0x000000, lightAlpha: 0.10, darkAlpha: 0.30)
