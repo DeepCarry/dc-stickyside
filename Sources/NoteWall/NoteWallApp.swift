@@ -199,8 +199,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 回收站每小时清理计时器（P2-17）：不保留会被释放。
     private var trashPurgeTimer: Timer? = nil
 
+    /// 单实例守卫（0.3.13）：启动时如果已有更早启动的同 bundle 实例在跑，请它退出。
+    /// 切换仓库的 relaunch（open -n + 旧进程退出）一旦旧进程没能及时退出，就会留下
+    /// 两个进程、两扇窗、两个 Dock 图标；新实例启动时清掉老的，保证同一时间只有
+    /// 一个实例在跑。只清比自己早启动的：两个人同时点两下，后启动的那个活下来。
+    /// launchDate 拿不到时保守不动手。注意 store 已在 NoteWallApp.init() 里建好，
+    /// 守卫的活是单实例存活、不是读顺序保证（设计 §6 Q1）。
+    private func terminateEarlierInstances() {
+        guard let bundleID = Bundle.main.bundleIdentifier,
+              let myLaunch = NSRunningApplication.current.launchDate else { return }
+        let me = ProcessInfo.processInfo.processIdentifier
+        for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleID) {
+            guard app.processIdentifier != me,
+                  let otherLaunch = app.launchDate,
+                  otherLaunch < myLaunch else { continue }
+            NSLog("StickySide: 已有旧实例 (pid %d) 在跑，请它退出", app.processIdentifier)
+            app.terminate()
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+
+        // 单实例守卫（0.3.13）：放选择器门之前、两种模式都覆盖；store 已在 init() 里建好，守卫只保单实例存活。
+        terminateEarlierInstances()
 
         // 选择器模式（设计 §2.2.1）：只留上面这一行，其余全部跳过——不建真 store、
         // 不接控制器、不装快捷键、不弹墙窗口。重启后的新进程会正常走一遍。
