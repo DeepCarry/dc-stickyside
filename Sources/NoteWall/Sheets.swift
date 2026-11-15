@@ -696,6 +696,14 @@ struct SettingsSheet: View {
                             }
                             .buttonStyle(GhostButtonStyle(height: 24, hPad: 9)).handCursor()
                         }
+                        row("当前仓库", subtitle: VaultManager.currentRoot?.path ?? Paths.support.path) {
+                            HStack(spacing: 6) {
+                                Button("切换仓库…") { switchVault() }
+                                    .buttonStyle(GhostButtonStyle(height: 24, hPad: 9)).handCursor()
+                                Button("新建仓库…") { createVault() }
+                                    .buttonStyle(GhostButtonStyle(height: 24, hPad: 9)).handCursor()
+                            }
+                        }
                         row("捕获面板位置", subtitle: store.captureFrame == nil ? "默认在屏幕中央偏上" : "已记住上次的位置") {
                             Button("重置") { store.captureFrame = nil }
                                 .buttonStyle(GhostButtonStyle(height: 24, hPad: 9)).handCursor()
@@ -832,6 +840,68 @@ struct SettingsSheet: View {
         } catch {
             ToastCenter.shared.show("导出失败：\(error.localizedDescription)")
         }
+    }
+
+    /// 切换仓库（设计 §2.3）：面板 → 校验 → 确认 → saveNow（旧仓库）
+    /// → adoptRoot → relaunch。取消（面板取消或确认框取消）：什么都不改。
+    /// 顺序是丢数据的坑：saveNow 必须在 adoptRoot 之前，否则旧进程此后
+    /// 的写盘会把旧仓库整份 store.json 盖到新仓库上。
+    private func switchVault() {
+        guard let url = VaultPanels.pickExisting() else { return }
+        guard VaultManager.validateVault(at: url) else {
+            showVaultError()
+            return
+        }
+        guard url != VaultManager.currentRoot else { return }
+        confirmSwitch(to: url)
+    }
+
+    /// 新建仓库（设计 §2.3）：面板 → （不存在就）建目录 → 校验 → 确认
+    /// → saveNow → adoptRoot → relaunch。目录已存在且是合法仓库时当作
+    /// 打开处理；已存在但非空又没有 store.json → 报错，留在设置里。
+    private func createVault() {
+        guard let url = VaultPanels.createNew() else { return }
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: url.path) {
+            do {
+                try fm.createDirectory(at: url, withIntermediateDirectories: true)
+            } catch {
+                showVaultError("创建文件夹失败：\(error.localizedDescription)")
+                return
+            }
+        }
+        guard VaultManager.validateVault(at: url) else {
+            showVaultError()
+            return
+        }
+        confirmSwitch(to: url)
+    }
+
+    /// 切换确认（Carry 2026-11-15 19:50 定）：对话框写清目标路径 + 会重启。
+    /// 点「切换并重启」才走 saveNow → adoptRoot → relaunch；点「取消」
+    /// 什么都不改、留在设置里。
+    private func confirmSwitch(to url: URL) {
+        let alert = NSAlert()
+        alert.messageText = "切换到这个仓库？"
+        alert.informativeText = "仓库：\(url.path)\n切换后随手贴会重启，当前仓库的内容会先保存。"
+        alert.addButton(withTitle: "切换并重启")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        store.saveNow()
+        VaultManager.adoptRoot(url)
+        guard VaultSwitcher.relaunch() else {
+            showVaultError("切换失败：无法启动新实例，请手动退出并重新打开随手贴。")
+            return
+        }
+    }
+
+    /// 仓库校验不过 / 建目录失败时的报错（选择器里同款文案的行内报错，
+    /// 设置里没有行内报错的位置，改弹对话框）。
+    private func showVaultError(_ message: String = "这个文件夹里没有随手贴仓库，也不是空文件夹") {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.addButton(withTitle: "好")
+        alert.runModal()
     }
 
     /// 损坏备份文件的修改时间（D4）：读不出来就用现在，TimeLabel 只做展示。

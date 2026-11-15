@@ -37,36 +37,39 @@ extension Notification.Name {
 
 struct NoteWallApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @StateObject private var store = AppContext.shared.store
+    @StateObject private var store: AppStore
+
+    /// 启动解析（设计 §2.2）：先解析仓库、再建 store。`@StateObject` 的属性
+    /// 初始化器在 `init()` 体之前执行，所以必须写显式 `init()`、在里面先解析、
+    /// 再给 `_store` 赋值（`self._store = StateObject(wrappedValue:)`）。
+    /// 这里是 `VaultManager.currentRoot` 全功能唯一的赋值点，之后只读。
+    init() {
+        let storedPath = UserDefaults.standard.string(forKey: VaultManager.defaultsKey)
+        let fm = FileManager.default
+        let storedExists = storedPath.map {
+            var isDir: ObjCBool = false
+            return fm.fileExists(atPath: $0, isDirectory: &isDir) && isDir.boolValue
+        } ?? false
+        let legacyExists = fm.fileExists(atPath: Paths.legacySupport.appendingPathComponent("store.json").path)
+        let res = VaultManager.resolve(storedPath: storedPath, storedRootExists: storedExists,
+                                       legacyStoreExists: legacyExists)
+        VaultManager.launchResolution = res
+        switch res {
+        case .use(let url):
+            VaultManager.currentRoot = url
+            if storedPath == nil {  // 认领老目录：顺手把路径写回 UserDefaults
+                UserDefaults.standard.set(url.path, forKey: VaultManager.defaultsKey)
+            }
+            _store = StateObject(wrappedValue: AppContext.shared.store)
+        case .needsChoice:
+            _store = StateObject(wrappedValue: AppStore(inMemory: true))
+        }
+    }
 
     var body: some Scene {
-        WindowGroup("随手贴", id: "wall") {
-            WallView()
-                .environmentObject(store)
-                .frame(minWidth: 720, minHeight: 480)
-                .background(T.bg)
-                .background(WindowHooks())
-                // 折叠按钮放在标题栏左侧：macOS 标准侧边栏图标，Muse/ChatGPT/Obsidian 用的就是它。
-                // 注意：.toolbar 是 View 修饰器，不是 Scene 修饰器——必须挂在窗口根视图上，
-                // 挂在 WindowGroup（Scene）上编译不过（'some Scene' has no member 'toolbar'）。
-                // next 是计算属性不是方法，调用不加括号。
-                .toolbar {
-                    ToolbarItem(placement: .navigation) {
-                        Button {
-                            store.sidebarMode = store.sidebarMode.next
-                        } label: {
-                            Image(systemName: "sidebar.left")
-                                .font(.icon(13))
-                        }
-                        .help("折叠侧边栏 (⌘B)")
-                        .keyboardShortcut("b", modifiers: .command)
-                    }
-                }
-        }
-        // v8：系统标题栏（居中显示当前视图名，产品名不在标题栏）。
-        .windowStyle(.titleBar)
-        .defaultSize(width: 1180, height: 820)
-        .commands {
+        // `.commands` 挂在整个条件上：选择器模式和墙模式共用同一套菜单
+        // （读的是当前 store，选择器模式下是内存 store，无副作用）。
+        mainScene.commands {
             CommandGroup(replacing: .newItem) {}
             // 编辑菜单的撤销/重做（D3）：系统标准项只认 key window 的 undoManager，
             // 焦点不在文本框时它要么灰掉、要么撤销残留的文字历史，与 ⌘Z（自定义栈）行为不一致。
@@ -96,6 +99,48 @@ struct NoteWallApp: App {
                 Text("当前 \(Int((store.fontScale * 100).rounded()))%")
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    /// 按启动解析选场景：选择器模式只开选择器窗口，否则开墙窗口（设计 §2.2）。
+    /// 必须是个独立的 `@SceneBuilder` 属性，不能把 if/else 直接写在 body 里再挂
+    /// `.commands`——if/else 两支的类型不同（`Window` vs `WindowGroup`），
+    /// 修饰器挂在整个条件上编译不过；`Group` 也包不住 Scene（它是 View 容器）。
+    /// 抽出来以后，`body` 只剩 `mainScene.commands { … }`，两边都干净。
+    @SceneBuilder private var mainScene: some Scene {
+        if VaultManager.launchResolution?.isNeedsChoice == true {
+            Window("欢迎使用随手贴", id: "vault-chooser") {
+                VaultChooserView()
+                    .environmentObject(store)   // 内存 store，只给选择器撑场面
+            }
+            .defaultSize(width: 480, height: 360)
+        } else {
+            WindowGroup("随手贴", id: "wall") {
+                WallView()
+                    .environmentObject(store)
+                    .frame(minWidth: 720, minHeight: 480)
+                    .background(T.bg)
+                    .background(WindowHooks())
+                    // 折叠按钮放在标题栏左侧：macOS 标准侧边栏图标，Muse/ChatGPT/Obsidian 用的就是它。
+                    // 注意：.toolbar 是 View 修饰器，不是 Scene 修饰器——必须挂在窗口根视图上，
+                    // 挂在 WindowGroup（Scene）上编译不过（'some Scene' has no member 'toolbar'）。
+                    // next 是计算属性不是方法，调用不加括号。
+                    .toolbar {
+                        ToolbarItem(placement: .navigation) {
+                            Button {
+                                store.sidebarMode = store.sidebarMode.next
+                            } label: {
+                                Image(systemName: "sidebar.left")
+                                    .font(.icon(13))
+                            }
+                            .help("折叠侧边栏 (⌘B)")
+                            .keyboardShortcut("b", modifiers: .command)
+                        }
+                    }
+            }
+            // v8：系统标题栏（居中显示当前视图名，产品名不在标题栏）。
+            .windowStyle(.titleBar)
+            .defaultSize(width: 1180, height: 820)
         }
     }
 
@@ -163,6 +208,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+
+        // 选择器模式（设计 §2.2.1）：只留上面这一行，其余全部跳过——不建真 store、
+        // 不接控制器、不装快捷键、不弹墙窗口。重启后的新进程会正常走一遍。
+        if VaultManager.launchResolution?.isNeedsChoice == true { return }
 
         // 系统若设成「总是显示滚动条」，TextEditor 会在卡片右侧画一根直角深色竖条
         // （在深色便签上非常显眼）。逐个 NSScrollView 改成 overlay：只在滚动时浮出。
@@ -239,6 +288,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Dock 图标被点击：没有可见窗口时把它找回来
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // 选择器模式：选择器窗口就是唯一窗口，Dock 点按只激活 App，不重建墙窗口。
+        if VaultManager.launchResolution?.isNeedsChoice == true { return false }
         if !flag {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { Self.bringWallToFront() }
         }
@@ -246,10 +297,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        false   // 关掉墙也要留着菜单栏与快捷键，随时还能记
+        // 选择器模式：关掉选择器窗口即退出 App，不让 App 空挂在 Dock 上没窗口可回。
+        if VaultManager.launchResolution?.isNeedsChoice == true { return true }
+        return false   // 关掉墙也要留着菜单栏与快捷键，随时还能记
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // 选择器模式：直接 return——否则退出时会创建 AppContext.shared.store 并
+        // saveNow()，在全新安装的机器上还会往老目录里撒一份种子（设计 §2.2.1）。
+        if VaultManager.launchResolution?.isNeedsChoice == true { return }
         // 边缘抽出面板里可能还有没写盘的草稿，先落盘
         EdgeDeckController.shared.flushSave()
         // 本次会话解过锁的便签重新封上：明文不留在磁盘上过夜。
