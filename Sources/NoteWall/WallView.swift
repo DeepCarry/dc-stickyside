@@ -355,7 +355,7 @@ struct WallContent: View {
             // 主窗口这个 monitor 若抢先吞掉 ⌘↩，面板就永远收不到——用户按了没反应。
             guard NSApp.keyWindow === AppContext.shared.wallWindow else { return false }
 
-            // ⌘B：折叠侧边栏（三态循环，与工具栏按钮同一动作）。
+            // ⌘B：折叠侧边栏（两态切换，与工具栏按钮同一动作）。
             // 本地监视器先于菜单快捷键收到事件，返回 true 即吞掉，工具栏按钮的 ⌘B 不会重复触发；
             // NSTextView 没有 ⌘B 默认绑定（加粗是格式菜单的命令，不是 NSTextView keyDown 的），不会抢字。
             // 放弹层守卫之前：焦点在输入框里时也能折叠侧栏。

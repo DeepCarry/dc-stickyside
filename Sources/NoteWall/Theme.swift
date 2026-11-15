@@ -34,24 +34,22 @@ enum Appearance: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-/// 侧边栏三态：展开 → 图标栏 → 收起。⌘B / 标题栏按钮循环切换，重启保持。
-enum SidebarMode: String, Codable, CaseIterable, Identifiable {
-    case expanded, rail, hidden
+/// 侧边栏两态：展开 / 全隐藏。⌘B / 标题栏按钮来回切换，重启保持。
+/// 0.3.12 起取消 rail 态（Carry：不要搞三种状态）。
+/// 解码要扛住老存档：0.3.0–0.3.11 的存档里可能存着 "rail"，见下方自定义 init。
+enum SidebarMode: String, Codable, Identifiable {
+    case expanded, hidden
     var id: String { rawValue }
-    var next: SidebarMode {
-        switch self {
-        case .expanded: return .rail
-        case .rail: return .hidden
-        case .hidden: return .expanded
-        }
-    }
-    /// 展开态宽度（v8 原型）；图标栏 54pt；收起不渲染。
-    var width: CGFloat {
-        switch self {
-        case .expanded: return 216
-        case .rail: return 54
-        case .hidden: return 0
-        }
+    var next: SidebarMode { self == .expanded ? .hidden : .expanded }
+    /// 展开态宽度（v8 原型）；收起不渲染。
+    var width: CGFloat { self == .expanded ? 216 : 0 }
+
+    /// 老存档兼容：未知 rawValue（一律是已删的 "rail"）读成 .expanded，
+    /// 不让整个存档因一个枚举值走进「存档损坏」分支。encode 保持系统合成。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        let raw = try c.decode(String.self)
+        self = SidebarMode(rawValue: raw) ?? .expanded
     }
 }
 

@@ -5,7 +5,7 @@ import AppKit
 //
 // 品牌头住在侧栏（不在标题栏）：logo + 随手贴 StickySide + 工作区切换。
 // 导航是「视图」（全部 / 收藏 / 最近 / 桌面便签 / 回收站），分类是「墙」。
-// 三态：展开 216pt → 图标栏 54pt（仅图标，悬停出提示）→ 收起。
+// 两态：展开 216pt → 收起。⌘B / 标题栏按钮来回切换。
 
 struct SidebarView: View {
     @EnvironmentObject private var store: AppStore
@@ -14,8 +14,6 @@ struct SidebarView: View {
     private var orderedWalls: [Wall] {
         store.walls.sorted { $0.sortOrder < $1.sortOrder }
     }
-
-    private var isRail: Bool { store.sidebarMode == .rail }
 
     var body: some View {
         if store.sidebarMode == .hidden {
@@ -29,7 +27,7 @@ struct SidebarView: View {
                 Spacer(minLength: 0)
                 footerSection
             }
-            .padding(.horizontal, isRail ? 7 : 12)
+            .padding(.horizontal, 12)
             .padding(.top, 14)
             .padding(.bottom, 12)
             .frame(width: store.sidebarMode.width, alignment: .leading)
@@ -43,9 +41,8 @@ struct SidebarView: View {
     // MARK: 品牌头
 
     /// 品牌图标：尺寸在容器层级锁死——28×28，圆角 6。
-    /// Rail 下 label 里只剩图标一个元素时，裸 `.resizable().frame(28)` 压不住
-    /// AppIcon 的固有尺寸（实测渲到约 128pt），所以这里补 `.aspectRatio(.fit)`，
-    /// 让图标按拟合方式吃满 28×28 的框。
+    /// AppIcon 的固有尺寸约 128pt，裸 `.resizable().frame(28)` 压不住它，
+    /// 所以这里补 `.aspectRatio(.fit)`，让图标按拟合方式吃满 28×28 的框。
     private var brandIcon: some View {
         Image(nsImage: NSApp.applicationIconImage)
             .resizable()
@@ -67,33 +64,24 @@ struct SidebarView: View {
                 ui.wallDialog = .create
             }
         } label: {
-            if isRail {
-                // Rail 下 label 就是图标本体：不再加 8pt 横向内边距（54pt 栏
-                // 内容宽只有 40pt，28 + 16 = 44pt 已溢出），横向占满栏宽居中。
+            HStack(spacing: 10) {
                 brandIcon
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 2)
-                    .contentShape(Rectangle())
-            } else {
-                HStack(spacing: 10) {
-                    brandIcon
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("随手贴")
-                            .font(.ui(14.5, .bold))
-                            .foregroundStyle(T.text)
-                        Text("StickySide")
-                            .font(.ui(T.captionSize, .medium))
-                            .foregroundStyle(T.textFaint)
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.down")
-                        .font(.icon(10, .semibold))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("随手贴")
+                        .font(.ui(14.5, .bold))
+                        .foregroundStyle(T.text)
+                    Text("StickySide")
+                        .font(.ui(T.captionSize, .medium))
                         .foregroundStyle(T.textFaint)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-                .contentShape(Rectangle())
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.down")
+                    .font(.icon(10, .semibold))
+                    .foregroundStyle(T.textFaint)
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -134,21 +122,19 @@ struct SidebarView: View {
                     .font(.icon(13))
                     .foregroundStyle(selected ? T.text : T.textDim)
                     .frame(width: 18)
-                if !isRail {
-                    Text(title)
-                        .font(.ui(13.5, selected ? .semibold : .regular))
-                        .foregroundStyle(selected ? T.text : T.textDim)
-                    Spacer(minLength: 0)
-                    if let count {
-                        Text("\(count)")
-                            .font(.ui(T.auxSize))
-                            .foregroundStyle(T.textFaint)
-                    }
+                Text(title)
+                    .font(.ui(13.5, selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? T.text : T.textDim)
+                Spacer(minLength: 0)
+                if let count {
+                    Text("\(count)")
+                        .font(.ui(T.auxSize))
+                        .foregroundStyle(T.textFaint)
                 }
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, alignment: isRail ? .center : .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(selected ? T.chipActive : Color.clear)
@@ -164,14 +150,12 @@ struct SidebarView: View {
 
     private var categoriesSection: some View {
         VStack(alignment: .leading, spacing: 2) {
-            if !isRail {
-                Text("分类")
-                    .font(.ui(T.metaSize, .bold))
-                    .foregroundStyle(T.textFaint)
-                    .padding(.horizontal, 9)
-                    .padding(.top, 14)
-                    .padding(.bottom, 4)
-            }
+            Text("分类")
+                .font(.ui(T.metaSize, .bold))
+                .foregroundStyle(T.textFaint)
+                .padding(.horizontal, 9)
+                .padding(.top, 14)
+                .padding(.bottom, 4)
             ForEach(orderedWalls) { wall in
                 wallRow(wall)
             }
@@ -184,15 +168,13 @@ struct SidebarView: View {
                         .font(.icon(11, .medium))
                         .foregroundStyle(T.textFaint)
                         .frame(width: 18)
-                    if !isRail {
-                        Text("新建分类")
-                            .font(.ui(13.5))
-                            .foregroundStyle(T.textFaint)
-                    }
+                    Text("新建分类")
+                        .font(.ui(13.5))
+                        .foregroundStyle(T.textFaint)
                 }
                 .padding(.horizontal, 9)
                 .padding(.vertical, 6)
-                .frame(maxWidth: .infinity, alignment: isRail ? .center : .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -210,19 +192,17 @@ struct SidebarView: View {
                     .frame(width: 9, height: 9)
                     .overlay(Circle().strokeBorder(T.line, lineWidth: 0.8))
                     .frame(width: 18)
-                if !isRail {
-                    Text(wall.name)
-                        .font(.ui(13.5, selected ? .semibold : .regular))
-                        .foregroundStyle(selected ? T.text : T.textDim)
-                    Spacer(minLength: 0)
-                    Text("\(store.count(for: wall.id))")
-                        .font(.ui(T.auxSize))
-                        .foregroundStyle(T.textFaint)
-                }
+                Text(wall.name)
+                    .font(.ui(13.5, selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? T.text : T.textDim)
+                Spacer(minLength: 0)
+                Text("\(store.count(for: wall.id))")
+                    .font(.ui(T.auxSize))
+                    .foregroundStyle(T.textFaint)
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, alignment: isRail ? .center : .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(selected ? T.chipActive : Color.clear)
@@ -275,15 +255,13 @@ struct SidebarView: View {
                         .font(.icon(13))
                         .foregroundStyle(T.textDim)
                         .frame(width: 18)
-                    if !isRail {
-                        Text("设置")
-                            .font(.ui(13.5))
-                            .foregroundStyle(T.textDim)
-                    }
+                    Text("设置")
+                        .font(.ui(13.5))
+                        .foregroundStyle(T.textDim)
                 }
                 .padding(.horizontal, 9)
                 .padding(.vertical, 6)
-                .frame(maxWidth: .infinity, alignment: isRail ? .center : .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

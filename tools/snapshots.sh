@@ -41,7 +41,6 @@ run() {
 }
 run wall      1440x920
 run wallimage 1440x920
-run rail      1440x920
 run empty     1440x920
 run capture   800x400
 run card      800x600

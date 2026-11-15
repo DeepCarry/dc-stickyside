@@ -105,16 +105,6 @@ enum Snapshot {
                 .environmentObject(s)
                 .frame(width: size.width, height: size.height, alignment: .top)
                 .background(T.bg))
-        case "rail":
-            // Rail 模式品牌图标：与默认 wall 场景同一路 WallContent，
-            // 渲染前把侧栏切到 rail，看图标是否 28×28 完整居中。
-            store.sidebarMode = .rail
-            let ui = WallUI()
-            ui.draft = ""
-            view = AnyView(WallContent(ui: ui, scrolls: false)
-                .environmentObject(store)
-                .frame(width: size.width, height: size.height, alignment: .top)
-                .background(T.bg))
         default:
             let ui = WallUI()
             ui.draft = ""
