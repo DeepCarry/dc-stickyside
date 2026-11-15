@@ -67,9 +67,44 @@ struct NoteWallApp: App {
     }
 
     var body: some Scene {
-        // `.commands` 挂在整个条件上：选择器模式和墙模式共用同一套菜单
+        WindowGroup("随手贴", id: "wall") {
+            // 0.3.12 修复：分支只能在 View 层做——if/else 选 Window / WindowGroup
+            // 编译不过（CI run 57 实锤）；所以只开一扇 WindowGroup，内容用
+            // ViewBuilder 的 if/else 分支。选择器窗口的尺寸在 VaultChooserView
+            // 挂载时再调小（见该文件）。
+            if VaultManager.launchResolution?.isNeedsChoice == true {
+                VaultChooserView()
+                    .environmentObject(store)   // 内存 store，只给选择器撑场面
+            } else {
+                WallView()
+                    .environmentObject(store)
+                    .frame(minWidth: 720, minHeight: 480)
+                    .background(T.bg)
+                    .background(WindowHooks())
+                    // 折叠按钮放在标题栏左侧：macOS 标准侧边栏图标，Muse/ChatGPT/Obsidian 用的就是它。
+                    // 注意：.toolbar 是 View 修饰器，不是 Scene 修饰器——必须挂在窗口根视图上，
+                    // 挂在 WindowGroup（Scene）上编译不过（'some Scene' has no member 'toolbar'）。
+                    // next 是计算属性不是方法，调用不加括号。
+                    .toolbar {
+                        ToolbarItem(placement: .navigation) {
+                            Button {
+                                store.sidebarMode = store.sidebarMode.next
+                            } label: {
+                                Image(systemName: "sidebar.left")
+                                    .font(.icon(13))
+                            }
+                            .help("折叠侧边栏 (⌘B)")
+                            .keyboardShortcut("b", modifiers: .command)
+                        }
+                    }
+            }
+        }
+        // v8：系统标题栏（居中显示当前视图名，产品名不在标题栏）。
+        .windowStyle(.titleBar)
+        .defaultSize(width: 1180, height: 820)
+        // `.commands` 挂在唯一的 WindowGroup 上：选择器模式和墙模式共用同一套菜单
         // （读的是当前 store，选择器模式下是内存 store，无副作用）。
-        mainScene.commands {
+        .commands {
             CommandGroup(replacing: .newItem) {}
             // 编辑菜单的撤销/重做（D3）：系统标准项只认 key window 的 undoManager，
             // 焦点不在文本框时它要么灰掉、要么撤销残留的文字历史，与 ⌘Z（自定义栈）行为不一致。
@@ -99,48 +134,6 @@ struct NoteWallApp: App {
                 Text("当前 \(Int((store.fontScale * 100).rounded()))%")
                     .foregroundStyle(.secondary)
             }
-        }
-    }
-
-    /// 按启动解析选场景：选择器模式只开选择器窗口，否则开墙窗口（设计 §2.2）。
-    /// 必须是个独立的 `@SceneBuilder` 属性，不能把 if/else 直接写在 body 里再挂
-    /// `.commands`——if/else 两支的类型不同（`Window` vs `WindowGroup`），
-    /// 修饰器挂在整个条件上编译不过；`Group` 也包不住 Scene（它是 View 容器）。
-    /// 抽出来以后，`body` 只剩 `mainScene.commands { … }`，两边都干净。
-    @SceneBuilder private var mainScene: some Scene {
-        if VaultManager.launchResolution?.isNeedsChoice == true {
-            Window("欢迎使用随手贴", id: "vault-chooser") {
-                VaultChooserView()
-                    .environmentObject(store)   // 内存 store，只给选择器撑场面
-            }
-            .defaultSize(width: 480, height: 360)
-        } else {
-            WindowGroup("随手贴", id: "wall") {
-                WallView()
-                    .environmentObject(store)
-                    .frame(minWidth: 720, minHeight: 480)
-                    .background(T.bg)
-                    .background(WindowHooks())
-                    // 折叠按钮放在标题栏左侧：macOS 标准侧边栏图标，Muse/ChatGPT/Obsidian 用的就是它。
-                    // 注意：.toolbar 是 View 修饰器，不是 Scene 修饰器——必须挂在窗口根视图上，
-                    // 挂在 WindowGroup（Scene）上编译不过（'some Scene' has no member 'toolbar'）。
-                    // next 是计算属性不是方法，调用不加括号。
-                    .toolbar {
-                        ToolbarItem(placement: .navigation) {
-                            Button {
-                                store.sidebarMode = store.sidebarMode.next
-                            } label: {
-                                Image(systemName: "sidebar.left")
-                                    .font(.icon(13))
-                            }
-                            .help("折叠侧边栏 (⌘B)")
-                            .keyboardShortcut("b", modifiers: .command)
-                        }
-                    }
-            }
-            // v8：系统标题栏（居中显示当前视图名，产品名不在标题栏）。
-            .windowStyle(.titleBar)
-            .defaultSize(width: 1180, height: 820)
         }
     }
 

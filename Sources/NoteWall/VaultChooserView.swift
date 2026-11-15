@@ -8,6 +8,8 @@ import AppKit
 struct VaultChooserView: View {
     /// 打开已有仓库时校验不过的行内报错；新建失败（建目录失败）也写这里。
     @State private var errorMessage: String? = nil
+    /// 选择器窗口只调一次尺寸（挂载时从墙默认尺寸缩到 480×360）。
+    @State private var didSizeWindow = false
 
     /// 只有「上次的仓库找不到了」时才在顶部显示提示（设计 §2.2）。
     private var isStoredMissing: Bool {
@@ -55,6 +57,15 @@ struct VaultChooserView: View {
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(T.bg)
+        // 0.3.12 修复：选择器和墙共用一扇 WindowGroup（窗口场景不能用 if/else 分支），
+        // 窗口初始是墙的 1180×820，挂载时把这扇窗一次调到 480×360 并居中。
+        .background(WindowAccessor { win in
+            guard let win = win, !didSizeWindow else { return }
+            didSizeWindow = true
+            win.setContentSize(NSSize(width: 480, height: 360))
+            win.title = "欢迎使用随手贴"
+            win.center()
+        })
     }
 
     /// 新建：面板 → （不存在就）建目录 → 校验 → 认领 → 重启。
