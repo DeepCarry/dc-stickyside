@@ -285,6 +285,10 @@ final class HandCursorRegistry {
     ///   兜住「别的进程改了屏幕光标但我们进程里仍记着手型」这种分家状态）；
     ///   runloop 观察者走 false，只在真被改掉时才补，避免每轮 runloop 都发一次 CGS 调用。
     private func reassert(force: Bool = true) {
+        // v0.3.9：点击宽限期内不重申。布局动画会触发 cursorUpdate 风暴，
+        // AppKit 每帧把光标洗回箭头，重申每帧又钉回手型，两边互拨就是快闪。
+        // hold 的本意就是钉住光标，状态机早已在 hold 内不切，这里把重申也停掉。
+        if Date.timeIntervalSinceReferenceDate < logic.holdUntil { return }
         guard logic.isHand else { return }
         // v0.9.17：指针在边缘面板上时不许重申手型（与 tick 的同名闸成对）
         if isEdgePanelTopmost(at: NSEvent.mouseLocation) { return }

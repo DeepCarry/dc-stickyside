@@ -618,17 +618,20 @@ struct WallContent: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(LinearGradient(colors: [.white.opacity(0.10), .clear, .black.opacity(0.04)],
                                      startPoint: .top, endPoint: .bottom))
+                .allowsHitTesting(false)
         )
         // 拖图进来：和 ⌘V 等价。没有这个高亮，用户不知道纸面能接图。
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(ui.paper.ink.opacity(ui.draftDropTargeted ? 0.30 : 0),
                               lineWidth: 2)
+                .allowsHitTesting(false)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(T.accent.opacity(ui.composerPulsing ? 0.55 : 0),
                               lineWidth: 1.5)
+                .allowsHitTesting(false)
         )
         .animation(.easeOut(duration: 0.45), value: ui.composerPulsing)
         .onDrop(of: [.fileURL, .image], isTargeted: ui.bind(\.draftDropTargeted)) { providers in
