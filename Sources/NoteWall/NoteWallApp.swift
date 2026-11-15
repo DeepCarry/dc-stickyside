@@ -126,6 +126,11 @@ private struct WindowHooks: View {
     var body: some View {
         WindowAccessor { win in
             AppContext.shared.wallWindow = win
+            // 0.3.10：墙窗口永不进选项卡。WindowGroup 默认 tabbingMode = .automatic，
+            // 系统（⇧⌘T / + 号 / “合并全部窗口” / 偏好“始终用选项卡”）随时能把
+            // 第二扇墙并成选项卡条，一旦出现就赖在顶部不走。直接在窗口上禁掉，
+            // 选项卡条、+ 号与相关菜单项对这扇窗一律失效。
+            win?.tabbingMode = .disallowed
         }
         .frame(width: 0, height: 0)
         .onAppear {
