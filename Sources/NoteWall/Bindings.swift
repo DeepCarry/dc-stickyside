@@ -202,6 +202,15 @@ final class EditorPlaceholderView: NSView {
 /// Toast、store 刷新……），刚敲的拼音字母就被这一行抹掉。`.equatable()` 实测也挡不住。
 /// 这里自己托管 NSTextView，只在外层 binding 的值**确实变了**时才写回，
 /// 并且组合态一律不写。这是唯一能从源头关掉问题的做法。
+
+/// 英雄纸这类「保存按钮 + 输入框分开」的入口，需要在点击那一刻直接读 NSTextView
+/// 里的实时文本：输入法组字期间 SwiftUI 的 binding 还是旧值，只信 binding，
+/// 按钮会在组字时被 `.disabled` 锁死、提交时读到空串（0.3.7）。
+/// 只存弱引用，不拥有视图；哪个编辑器传了它，读到的就是哪一个。
+final class TextViewRef: ObservableObject {
+    weak var textView: NSTextView?
+}
+
 struct PlainTextEditor: NSViewRepresentable {
     @Binding var text: String
     let fontSize: CGFloat
@@ -209,6 +218,8 @@ struct PlainTextEditor: NSViewRepresentable {
     var focusOnAppear = false
     /// 外部想让它获得焦点时 +1（比如点「新建便签」）。focusOnAppear 只管挂载那一次。
     var focusToken: Int = 0
+    /// 需要在点击时直接读实时文本的编辑器才传（英雄纸）；不传的编辑器行为不变。
+    var textViewRef: TextViewRef? = nil
 
     func makeCoordinator() -> PlainTextCoordinator {
         PlainTextCoordinator(binding: $text)
@@ -258,6 +269,7 @@ struct PlainTextEditor: NSViewRepresentable {
         sv.documentView = tv
         sv.focusOnAppear = focusOnAppear
         context.coordinator.textView = tv
+        textViewRef?.textView = tv
         context.coordinator.lastSynced = text
         context.coordinator.lastFocusToken = focusToken
         return sv

@@ -75,6 +75,19 @@ final class WallUI: ObservableObject {
     }
 }
 
+/// 「记下来」/ ⌘↩ 共用的正文裁决（0.3.7）：实时文本优先——输入法组字中的拼音
+/// 也在 NSTextView.string 里，ui.draft 只作后备（组字期间它还是旧值）。
+/// 只在「真的没字也没图」时返回 nil；有图无字时返回 ""，调用方照常存图。
+/// 顶层类型：英雄纸与捕获面板共用，`--selftest`（L0）直接断言它。
+enum ComposerDraft {
+    static func resolve(liveText: String?, draft: String, hasImage: Bool) -> String? {
+        let live = (liveText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = live.isEmpty ? draft.trimmingCharacters(in: .whitespacesAndNewlines) : live
+        guard !text.isEmpty || hasImage else { return nil }
+        return text
+    }
+}
+
 // MARK: - 主界面（壳）
 
 struct WallView: View {
@@ -178,6 +191,8 @@ struct WallContent: View {
 
     /// 拖拽过程中的临时状态（谁在被拖、落点在哪）。@StateObject 保证窗口重算不会丢。
     @StateObject private var dragState = DragState()
+    /// 英雄纸输入框的实时文本入口（0.3.7）：点「记下来」时直接读它，不只信 ui.draft。
+    @StateObject private var composerText = TextViewRef()
     /// 占位显隐由 EditorPlaceholder 在 AppKit 内部判断、正文由 PlainTextEditor 自己托管：
     /// 两者都不在打字期间发布 SwiftUI 状态，输入法组合文本才不会被重算吃掉。
     /// 焦点由 PlainTextEditor(focusOnAppear:) 在挂载时自己抢，不用 @FocusState。
@@ -549,7 +564,7 @@ struct WallContent: View {
                         .allowsHitTesting(false)
                     PlainTextEditor(text: ui.bind(\.draft), fontSize: 15,
                                     ink: ui.paper.ink, focusOnAppear: true,
-                                    focusToken: ui.focusComposerToken)
+                                    focusToken: ui.focusComposerToken, textViewRef: composerText)
                         .frame(height: 96)
                 }
             }
@@ -608,14 +623,15 @@ struct WallContent: View {
                 Text("⌘ ↩")
                     .font(.ui(T.captionSize))
                     .foregroundStyle(ui.paper.ink.opacity(0.34))
+                // 0.3.7：永不因派生状态禁用——ui.draft 在输入法组字期间是旧值，
+                // 挂 `.disabled(draftIsEmpty)` 会把有字的按钮锁死；空态由 commitDraft
+                // 自己裁决并弹 Toast，不再静默无事。
                 Button(action: commitDraft) {
                     Text("记下来")
                 }
                 .buttonStyle(PillButtonStyle(bg: ui.paper.ink.opacity(0.85),
                                              fg: ui.paper.paper,
                                              height: 28, hPad: 14)).handCursor()
-                .disabled(draftIsEmpty)
-                .opacity(draftIsEmpty ? 0.55 : 1)
             }
             .padding(.top, 12)
         }
@@ -741,11 +757,6 @@ struct WallContent: View {
                 .help(t == "待办" ? "每行会自动变成可勾选项" : "记录类型，用于筛选和归类")
             }
         }
-    }
-
-    /// 只有字和图都没有时才算空——否则粘了图还是点不动「记下来」
-    private var draftIsEmpty: Bool {
-        ui.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && ui.draftImage == nil
     }
 
     /// 六个色块必须垫在一条比纸面更深的轨道里，否则黄色色块和黄色纸面会重合。
@@ -1309,13 +1320,17 @@ struct WallContent: View {
     }
 
     private func commitDraft() {
-        // 输入法还在组字（拼音未上屏）时先收掉组合态：unmarkText 会同步触发
-        // textDidChange，ui.draft 里才有完整句子，否则只剩已上屏的部分（P0-8）。
-        if let tv = NSApp.keyWindow?.firstResponder as? NSTextView, tv.hasMarkedText() {
-            tv.unmarkText()
+        // 0.3.7：正文以英雄纸 NSTextView 的实时文本为准（组字中的拼音也在 string 里），
+        // 不要只信 ui.draft——组字期间它还是旧值，按钮就是这么被锁死的。
+        // 先读后收组字态：unmarkText 的语义（提交还是丢弃）不影响已读到的串。
+        let tv = composerText.textView ?? (NSApp.keyWindow?.firstResponder as? NSTextView)
+        let liveText = tv?.string
+        if let tv, tv.hasMarkedText() { tv.unmarkText() }
+        guard let text = ComposerDraft.resolve(liveText: liveText, draft: ui.draft,
+                                               hasImage: ui.draftImage != nil) else {
+            ToastCenter.shared.show("先写点什么再记下来")
+            return
         }
-        let text = ui.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || ui.draftImage != nil else { return }
         // 待办自动转清单已收进 Store.add（P2-19），这里不再 inline 判断。
         var image: NoteImage? = nil
         if let ns = ui.draftImage {
@@ -1333,8 +1348,13 @@ struct WallContent: View {
             store.add(text: text, paper: ui.paper, tag: ui.tag, image: image)
         }
         ui.draft = ""
+        // 直接清掉 NSTextView 里的串：只清 ui.draft 要等下一次重算才回写，
+        // 那一帧没来之前旧文还在，下次组字提交会把它复活（P0-8）。
+        if let tv, !tv.string.isEmpty, !tv.hasMarkedText() { tv.string = "" }
         withAnimation(.easeOut(duration: 0.15)) { ui.draftImage = nil }
         ToastCenter.shared.show("已记下来")
+        // 点按钮那一下焦点可能已不在纸上：把焦点抢回来，用户才能接着写。
+        ui.focusComposerToken += 1
     }
 
     /// 点「新建便签」/ 虚线空位时给英雄纸一个 0.9s 描边脉冲。
