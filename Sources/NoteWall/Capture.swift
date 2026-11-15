@@ -541,6 +541,7 @@ struct CaptureView: View {
                                 side: 15, cell: 22, ringOpacity: 0.88)
                 }
                 .buttonStyle(.plain).handCursor()
+                .accessibilityLabel("换成\(p.title)纸")
                 .help(p.title)
             }
         }

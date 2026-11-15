@@ -298,6 +298,9 @@ struct NoteCard: View {
                 appeared = true
             }
         }
+        .accessibilityLabel(firstLine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { if note.isLocked { onUnlock() } else { onOpen() } }
     }
 
     /// 置顶的视觉语言是图钉（0.3.1，替代 0.3.0 的胶带：胶带占地方、不好看）。
@@ -373,6 +376,9 @@ struct NoteCard: View {
             if note.isLocked { onUnlock() } else { onOpen() }
         }
         .contextMenu { actions }
+        .accessibilityLabel(firstLine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { if note.isLocked { onUnlock() } else { onOpen() } }
     }
 
     private var header: some View {
