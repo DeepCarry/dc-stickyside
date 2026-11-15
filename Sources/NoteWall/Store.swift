@@ -8,10 +8,19 @@ enum Paths {
     /// 自检把存档/密钥/图片全指到临时目录，绝不碰真实数据。
     nonisolated(unsafe) static var overrideRoot: URL?
 
-    static var support: URL {
-        if let overrideRoot { return overrideRoot }
+    /// 固定老路径（0.3.11 及以前唯一的数据目录）。认领逻辑用它，平时不用。
+    static var legacySupport: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("NoteWall", isDirectory: true)
+    }
+
+    /// 当前仓库根：自检 override > 启动时解析出的 currentRoot > 老路径。
+    /// currentRoot 在 NoteWallApp.init() 里、AppContext.shared.store 创建之前就定好
+    /// （设计 §2.2 的不变量 1），之后只读；adoptRoot 不碰它（设计 §2.3）。
+    static var support: URL {
+        if let overrideRoot { return overrideRoot }
+        if let currentRoot = VaultManager.currentRoot { return currentRoot }
+        return legacySupport
     }
     static var images: URL { support.appendingPathComponent("images", isDirectory: true) }
     static var thumbs: URL { support.appendingPathComponent("thumbs", isDirectory: true) }
