@@ -28,6 +28,8 @@ final class WallUI: ObservableObject {
     @Published var editing: Note? = nil
     @Published var showDetail = false
     @Published var showSettings = false
+    /// 设置打开时要定位到的分组（桌面便签 CTA 用）；用完即清，不持久化。
+    @Published var settingsSection: SettingsSection? = nil
     @Published var showTrash = false
 
     @Published var wallDialog: WallDialog? = nil
@@ -112,7 +114,7 @@ struct WallView: View {
                 }
             }
             .sheet(isPresented: ui.bind(\.showSettings)) {
-                SettingsSheet(onClose: { ui.showSettings = false })
+                SettingsSheet(ui: ui, onClose: { ui.showSettings = false })
                     .environmentObject(store)
             }
             .sheet(isPresented: ui.bind(\.showTrash)) {
@@ -746,6 +748,7 @@ struct WallContent: View {
                                 selected: ui.paper == p, side: 17, cell: 24)
                 }
                 .buttonStyle(.plain).handCursor()
+                .accessibilityLabel("换成\(p.title)纸")
                 .help(p.title)
             }
         }
@@ -910,6 +913,7 @@ struct WallContent: View {
                     )
             }
             .buttonStyle(.plain).handCursor().help("整齐显示")
+            .accessibilityLabel("整齐排列")
             Button { store.neatMode = false } label: {
                 Image(systemName: "rectangle.on.rectangle.angled")
                     .font(.icon(12))
@@ -921,6 +925,7 @@ struct WallContent: View {
                     )
             }
             .buttonStyle(.plain).handCursor().help("旋转显示")
+            .accessibilityLabel("自由旋转")
         }
         .padding(2)
         .background(
@@ -1211,7 +1216,10 @@ struct WallContent: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)
             if showEdgeButton {
-                Button("去设置里打开边缘条") { ui.showSettings = true }
+                Button("去设置里打开边缘条") {
+                    ui.settingsSection = .edge
+                    ui.showSettings = true
+                }
                     .buttonStyle(GhostButtonStyle(height: 26, hPad: 12)).handCursor()
                     .padding(.top, 4)
             }
@@ -1258,11 +1266,18 @@ struct WallContent: View {
     // MARK: 动作
 
     /// 卡片上点「已锁定」→ Touch ID → 解开后直接进详情，省掉一次额外点击。
-    /// 解不开时不装死：如果是因为主密钥换了，也要把详情页打开，那里有明确的原因。
+    /// 解不开时不开详情：密钥换了也只在原地用 Toast 说明原因，锁着的便签
+    /// 不因为「打不开的原因要解释」就被打开。
     private func unlock(_ note: Note) {
         store.unlock(note.id) { ok in
             guard let fresh = store.notes.first(where: { $0.id == note.id }) else { return }
-            guard ok || store.keyStale else { return }
+            guard UnlockPresentation.shouldOpenDetail(unlockOK: ok, isLocked: fresh.isLocked) else {
+                if store.keyStale {
+                    // 文案复用详情页 lockedBody 里 keyStale 那行，不新写。
+                    ToastCenter.shared.show("内容已无法解密：主密钥换过了。")
+                }
+                return
+            }
             ui.editing = fresh
             ui.showDetail = true
         }

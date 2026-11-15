@@ -15,6 +15,9 @@ struct NoteDetailSheet: View {
     @StateObject private var box: NoteDraftBox
     /// 清单/编辑双模式的开关（P1-3）：默认打勾模式，点“编辑”切回纯文本。
     @State private var isEditingText = false
+    /// 详情编辑器抢焦点用（0.3.11 §1）：点“编辑”切到文本模式时 +1，
+    /// 与英雄纸的 focusComposerToken 同款机制。
+    @State private var focusDetailToken = 0
     /// 关详情时的脏比较基准（P2-20）：onDisappear 只在草稿真改过时写回。
     private let original: Note
     /// save() 已写回过：onDisappear 不再重复写回（updatedAt 会被 bump 两次，排序会抖）。
@@ -209,7 +212,8 @@ struct NoteDetailSheet: View {
                            alignment: .topLeading)
                     .allowsHitTesting(false)
                 PlainTextEditor(text: box.bind(\.note.text), fontSize: 15,
-                                ink: draft.paper.ink)
+                                ink: draft.paper.ink,
+                                focusOnAppear: true, focusToken: focusDetailToken)
                     .frame(height: 150)
             }
         }
@@ -243,7 +247,10 @@ struct NoteDetailSheet: View {
     private var editToggleRow: some View {
         HStack {
             Spacer(minLength: 0)
-            Button { isEditingText.toggle() } label: {
+            Button {
+                isEditingText.toggle()
+                if isEditingText { focusDetailToken += 1 }
+            } label: {
                 HStack(spacing: 5) {
                     Image(systemName: isEditingText ? "checkmark" : "pencil")
                         .font(.icon(T.captionSize, .medium))
@@ -294,6 +301,7 @@ struct NoteDetailSheet: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain).handCursor()
+                .accessibilityLabel("锁定这张便签")
                 .help("锁定这张便签（⌘⇧L，解锁要 Touch ID）")
                 .disabled(!store.canLock(draft))
                 .opacity(store.canLock(draft) ? 1 : 0.4)
@@ -317,6 +325,7 @@ struct NoteDetailSheet: View {
                                 selected: draft.paper == p, side: 15, cell: 22)
                 }
                 .buttonStyle(.plain).handCursor()
+                .accessibilityLabel("换成\(p.title)纸")
             }
         }
         .padding(.horizontal, 8)
@@ -337,6 +346,7 @@ struct NoteDetailSheet: View {
                 .background(Circle().fill(draft.paper.ink.opacity(0.06)))
         }
         .buttonStyle(.plain).handCursor()
+        .accessibilityLabel("关闭")
         .padding(14)
     }
 
@@ -439,11 +449,25 @@ final class SettingsBox: ObservableObject {
     @Published var launchAtLogin: Bool = LaunchAtLogin.isEnabled
 }
 
+/// 设置里可深链定位的分组。目前只有「屏幕边缘」需要从桌面便签 CTA 跳过去。
+enum SettingsSection: String, Hashable { case edge }
+
 struct SettingsSheet: View {
     @EnvironmentObject private var store: AppStore
     @StateObject private var box = SettingsBox()
     @State private var confirmEmptyTrash = false
+    /// 打开时要定位到的分组；nil = 不定位（快照与 --settingstest 不传）。
+    /// 做成可选参数是有意的：`main.swift:771` 的 `--settingstest` 调用点也在
+    /// 无法走 API 推送的文件里，必填参数会让 CI 在 L0 落地前一直是红的。
+    /// 只在 onAppear 里读一次（定位 + 清掉），从不观察它，所以是普通属性，
+    /// 不是 @ObservedObject——Optional 不符合 ObservableObject，包一层会编译失败。
+    var ui: WallUI?
     var onClose: () -> Void
+
+    init(ui: WallUI? = nil, onClose: @escaping () -> Void) {
+        self.ui = ui
+        self.onClose = onClose
+    }
 
     private var lockedCount: Int { store.notes.filter(\.isLocked).count }
 
@@ -468,7 +492,16 @@ struct SettingsSheet: View {
                     // 直接关掉指示器会让「下面还有内容」完全没提示。
                     // 0.3.5：指示器重新打开——6 组内容在 640pt 固定高度里会溢出，
                     // 没有指示器用户不知道下面还有内容（P2-7）。
-                    ScrollView(.vertical, showsIndicators: true) { settingsBody }
+                    ScrollViewReader { proxy in
+                        ScrollView(.vertical, showsIndicators: true) { settingsBody }
+                            .onAppear {
+                                if let section = ui?.settingsSection {
+                                    proxy.scrollTo(section, anchor: .top)
+                                    ui?.settingsSection = nil
+                                }
+                            }
+                            .onDisappear { ui?.settingsSection = nil }
+                    }
                 }
             }
         }
@@ -621,6 +654,7 @@ struct SettingsSheet: View {
                         }
                         hint("锁定的便签永远不会出现在边缘。钉住模式从卡片的「⋯」菜单里逐张管理；抽出面板里改完即存，停手自动写盘。")
                     }
+                    .id(SettingsSection.edge)
 
                     group("安全") {
                         row("解锁方式", subtitle: "锁定是把内容加密落盘，解锁要验证身份") {
