@@ -163,7 +163,15 @@ private struct WindowHooks: View {
 
     var body: some View {
         WindowAccessor { win in
-            AppContext.shared.wallWindow = win
+            // 0.3.14：赋值加守卫——回调是 DispatchQueue.main.async 派发的，被关掉
+            // 那扇窗的待执行回调随后跑起来时 [weak v] 已空，onChange(nil) 会把
+            // wallWindow 无条件写成 nil，下一次 bringWallToFront 见引用为空就
+            // openWindow 再建一扇窗；且“非 nil 但已关闭”的窗（仍有强引用留住）也要
+            // 拦住。已关闭的窗会立即从 NSApp.windows 移除。不要用 isVisible 判断
+            // （最小化/隐藏的墙窗 isVisible 为 false，会误拦正常赋值）。
+            if let win = win, NSApp.windows.contains(where: { $0 === win }) {
+                AppContext.shared.wallWindow = win
+            }
             // 0.3.10：墙窗口永不进选项卡。WindowGroup 默认 tabbingMode = .automatic，
             // 系统（⇧⌘T / + 号 / “合并全部窗口” / 偏好“始终用选项卡”）随时能把
             // 第二扇墙并成选项卡条，一旦出现就赖在顶部不走。直接在窗口上禁掉，
@@ -218,11 +226,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// 选项卡组解散（0.3.14）：0.3.10 只禁了以后分组，没拆已有的组——组随 Saved State
+    /// 每次启动原样恢复回来。启动 settled 后（窗口顺序已定、keyWindow 可靠）跑一次：
+    /// 组里只留用户正看着的那扇窗，其余关掉；组只剩一扇，选项卡条自己就没了。
+    /// 关而不是移出（moveTabToNewWindow 只会把组拆成两扇独立窗）；另一扇只是
+    /// 同一份 store 的重复视图，关掉只丢它自己的界面状态，数据不丢。
+    /// 关完立刻把 wallWindow 重新指回 keep：拆组前它可能正指着被关的那扇，
+    /// 弱引用随释放变 nil，不补这一行，下一次 bringWallToFront 会误建第二扇窗。
+    private static func dissolveRestoredTabGroup() {
+        guard let keep = NSApp.keyWindow ?? AppContext.shared.wallWindow else {
+            NSLog("StickySide: 拆选项卡组时没找到可见窗口，跳过")
+            return
+        }
+        guard let group = keep.tabGroup, group.windows.count > 1 else { return }
+        NSLog("StickySide: 选项卡组里有 \(group.windows.count) 扇窗，只留当前这扇")
+        for other in group.windows where other !== keep {
+            other.close()
+        }
+        AppContext.shared.wallWindow = keep
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
 
         // 单实例守卫（0.3.13）：放选择器门之前、两种模式都覆盖；store 已在 init() 里建好，守卫只保单实例存活。
         terminateEarlierInstances()
+
+        // 选项卡组解散（0.3.14）：+0.5s 时恢复分组肯定已成型（恢复的窗口在
+        // applicationDidFinishLaunching 之前就已创建），且在 +0.15s 的
+        // bringWallToFront 之后，keyWindow 可靠。放选择器门之前，两种模式都覆盖。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { Self.dissolveRestoredTabGroup() }
 
         // 选择器模式（设计 §2.2.1）：只留上面这一行，其余全部跳过——不建真 store、
         // 不接控制器、不装快捷键、不弹墙窗口。重启后的新进程会正常走一遍。

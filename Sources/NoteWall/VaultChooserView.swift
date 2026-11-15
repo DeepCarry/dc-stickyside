@@ -62,6 +62,8 @@ struct VaultChooserView: View {
         .background(WindowAccessor { win in
             guard let win = win, !didSizeWindow else { return }
             didSizeWindow = true
+            // 0.3.14：选择器窗口也禁分组，免得这扇小窗以后被并进选项卡条。
+            win.tabbingMode = .disallowed
             win.setContentSize(NSSize(width: 480, height: 360))
             win.title = "欢迎使用随手贴"
             win.center()
