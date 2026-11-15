@@ -215,10 +215,10 @@ final class AppStore: ObservableObject {
         // 损坏存档的启动提示（D4）：只报一次（init 内消费，与 P0-6 的旗子消费同一模式）。
         // 备份文件在，恢复是手动的——给文件、给路径、给说明，不承诺自动修复。
         if !corruptBackups.isEmpty {
-            ToastCenter.shared.show("旧存档已损坏，已重建为空白墙", actionTitle: "在访达中显示", seconds: 6) { [weak self] in
+            ToastCenter.shared.show("旧存档已损坏，已重建为空白墙", actionTitle: "在访达中显示", action: { [weak self] in
                 guard let self else { return }
                 NSWorkspace.shared.activateFileViewerSelecting(self.corruptBackups)
-            }
+            }, seconds: 6)
         } else if corruptRebuildWithoutBackup {
             ToastCenter.shared.show("旧存档已损坏且无法备份，已重建为空白墙", seconds: 6)
         }
