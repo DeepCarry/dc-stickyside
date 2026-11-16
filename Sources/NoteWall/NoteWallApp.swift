@@ -226,24 +226,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 选项卡组解散（0.3.14）：0.3.10 只禁了以后分组，没拆已有的组——组随 Saved State
-    /// 每次启动原样恢复回来。启动 settled 后（窗口顺序已定、keyWindow 可靠）跑一次：
-    /// 组里只留用户正看着的那扇窗，其余关掉；组只剩一扇，选项卡条自己就没了。
+    /// 选项卡组解散（0.3.14 立项、0.3.17 改成常驻守卫）：0.3.10 只禁了以后分组，
+    /// 没拆已有的组——组随 Saved State 每次启动原样恢复回来。0.3.14 只在启动 +0.5s
+    /// 跑一次，没兜住（组晚于 +0.5s 成型、或之后又冒出第二扇窗，就再也没人拆）。
+    /// 0.3.17 起它是常驻守卫：启动 +0.5s、bringWallToFront 内 3 处、App 切回前台
+    /// （applicationDidBecomeActive），共 5 处调用点，组里只留当前这扇窗，其余关掉；
+    /// 组只剩一扇，选项卡条自己就没了。
     /// 关而不是移出（moveTabToNewWindow 只会把组拆成两扇独立窗）；另一扇只是
     /// 同一份 store 的重复视图，关掉只丢它自己的界面状态，数据不丢。
-    /// 关完立刻把 wallWindow 重新指回 keep：拆组前它可能正指着被关的那扇，
+    /// 关完立刻把 wallWindow 重新指回目标窗：拆组前它可能正指着被关的那扇，
     /// 弱引用随释放变 nil，不补这一行，下一次 bringWallToFront 会误建第二扇窗。
-    private static func dissolveRestoredTabGroup() {
+    /// 每次调用都是幂等的：组里 ≤1 扇直接 return。
+    private static func dissolveTabGroupIfNeeded() {
         guard let keep = NSApp.keyWindow ?? AppContext.shared.wallWindow else {
             NSLog("StickySide: 拆选项卡组时没找到可见窗口，跳过")
             return
         }
-        guard let group = keep.tabGroup, group.windows.count > 1 else { return }
+        // 0.3.17：浮层（捕获/刘海/边缘条含文本编辑器）可成为 keyWindow 但无 tabGroup；
+        // keep 无组时改取 wallWindow，避免静默跳过（正看的窗若在组里，tabGroup 非空，不触发）。
+        let target = keep.tabGroup == nil ? (AppContext.shared.wallWindow ?? keep) : keep
+        guard let group = target.tabGroup, group.windows.count > 1 else { return }
         NSLog("StickySide: 选项卡组里有 \(group.windows.count) 扇窗，只留当前这扇")
-        for other in group.windows where other !== keep {
+        for other in group.windows where other !== target {
             other.close()
         }
-        AppContext.shared.wallWindow = keep
+        AppContext.shared.wallWindow = target
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -252,10 +259,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 单实例守卫（0.3.13）：放选择器门之前、两种模式都覆盖；store 已在 init() 里建好，守卫只保单实例存活。
         terminateEarlierInstances()
 
-        // 选项卡组解散（0.3.14）：+0.5s 时恢复分组肯定已成型（恢复的窗口在
-        // applicationDidFinishLaunching 之前就已创建），且在 +0.15s 的
+        // 选项卡组常驻守卫（0.3.17）：启动时跑一次——+0.5s 时恢复分组肯定已成型
+        // （恢复的窗口在 applicationDidFinishLaunching 之前就已创建），且在 +0.15s 的
         // bringWallToFront 之后，keyWindow 可靠。放选择器门之前，两种模式都覆盖。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { Self.dissolveRestoredTabGroup() }
+        // 这只是 5 处调用点之一：之后每次 bringWallToFront 与每次 App 切回前台还会再查。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { Self.dissolveTabGroupIfNeeded() }
 
         // 选择器模式（设计 §2.2.1）：只留上面这一行，其余全部跳过——不建真 store、
         // 不接控制器、不装快捷键、不弹墙窗口。重启后的新进程会正常走一遍。
@@ -344,6 +352,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// App 切回前台：常驻守卫（0.3.17）——组在运行中出现、用户切回来才看到时，在这里拆掉。
+    func applicationDidBecomeActive(_ notification: Notification) {
+        Self.dissolveTabGroupIfNeeded()
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         // 选择器模式：关掉选择器窗口即退出 App，不让 App 空挂在 Dock 上没窗口可回。
         if VaultManager.launchResolution?.isNeedsChoice == true { return true }
@@ -418,11 +431,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let win = AppContext.shared.wallWindow {
             if win.isMiniaturized { win.deminiaturize(nil) }
             win.makeKeyAndOrderFront(nil)
+            Self.dissolveTabGroupIfNeeded()
         } else {
-            AppContext.shared.openWallWindow?()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                NSApp.activate(ignoringOtherApps: true)
-                AppContext.shared.wallWindow?.makeKeyAndOrderFront(nil)
+            // 0.3.17：先等一拍再建窗——WindowAccessor 回调是 async 派发的，
+            // onAppear 可能已设好 openWallWindow、回调还没跑，wallWindow 仍为空
+            // 但窗其实已存在；此时立即 openWindow 必造第二扇窗。
+            // +0.3s 后复核：窗已出现则直接置前（不等用户点第二次），
+            // 仍为空才是真的没窗，再建。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                if let win = AppContext.shared.wallWindow {
+                    if win.isMiniaturized { win.deminiaturize(nil) }
+                    win.makeKeyAndOrderFront(nil)
+                    Self.dissolveTabGroupIfNeeded()
+                } else {
+                    AppContext.shared.openWallWindow?()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                        NSApp.activate(ignoringOtherApps: true)
+                        AppContext.shared.wallWindow?.makeKeyAndOrderFront(nil)
+                        Self.dissolveTabGroupIfNeeded()
+                    }
+                }
             }
         }
     }
