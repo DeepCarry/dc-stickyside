@@ -327,15 +327,23 @@ struct CaptureView: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(T.float)
+                .fill(model.paper.paper)
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(T.lineStrong, lineWidth: 1)
+                        .strokeBorder(model.paper.ink.opacity(0.12), lineWidth: 1)
                 )
                 // 阴影必须完全落在下面的 padding 内自然淡出：
                 // padding(24) > radius(12) + 位移(5) + 模糊尾部，否则会被窗口边缘硬切，
                 // 看起来就是卡片外面多了一圈半透明边框 + 右下角一块深色。
                 .shadow(color: Color.dyn(0x000000, 0x000000, lightAlpha: 0.18, darkAlpha: 0.42), radius: 12, y: 5)
+        )
+        .overlay(
+            // 顶部受光：与英雄纸同一套光源。穿透挂在 overlay 内的形状上——
+            // 挂在 .overlay(...) 外面会把整张卡的点击都禁掉（0.3.9 教训）。
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(LinearGradient(colors: [.white.opacity(0.10), .clear, .black.opacity(0.04)],
+                                     startPoint: .top, endPoint: .bottom))
+                .allowsHitTesting(false)
         )
         .padding(24)
         .background(dropSurface)
@@ -365,18 +373,18 @@ struct CaptureView: View {
         HStack(spacing: 6) {
             Text("新便签")
                 .font(.ui(T.auxSize, .medium))
-                .foregroundStyle(T.textDim)
+                .foregroundStyle(model.paper.ink.opacity(0.55))
             ForEach(["灵感", "想法", "待办", "资料"], id: \.self) { t in
                 Button {
                     model.tag = t
                 } label: {
                     Text(t)
                         .font(.ui(T.metaSize))
-                        .foregroundStyle(model.tag == t ? T.accent : T.textFaint)
+                        .foregroundStyle(model.tag == t ? model.paper.ink.opacity(0.85) : model.paper.ink.opacity(0.40))
                         .frame(height: 22)
                         .padding(.horizontal, 8)
                         .background(
-                            Capsule().fill(model.tag == t ? T.accent.opacity(0.14) : Color.clear)
+                            Capsule().fill(model.tag == t ? model.paper.ink.opacity(0.11) : Color.clear)
                         )
                 }
                 .buttonStyle(.plain).handCursor()
@@ -385,14 +393,14 @@ struct CaptureView: View {
             if model.pinned {
                 Label("已钉住", systemImage: "pin.fill")
                     .font(.ui(T.captionSize))
-                    .foregroundStyle(T.accent)
+                    .foregroundStyle(model.paper.ink.opacity(0.85))
             }
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.icon(9, .bold))
-                    .foregroundStyle(T.textFaint)
+                    .foregroundStyle(model.paper.ink.opacity(0.60))
                     .frame(width: 20, height: 20)
-                    .background(Circle().fill(T.inset))
+                    .background(Circle().fill(model.paper.ink.opacity(0.07)))
             }
             .buttonStyle(.plain).handCursor()
         }
@@ -407,13 +415,13 @@ struct CaptureView: View {
                          ? "每行一条待办，保存后自动变成可勾选项"
                          : "记下点什么…")
                         .font(.ui(16))
-                        .foregroundStyle(T.textFaint)
+                        .foregroundStyle(model.paper.ink.opacity(0.38))
                         // 与 TextEditor 的文字起点对齐，否则光标压在占位字上
                         .offset(x: EditorMetrics.textOrigin.width, y: EditorMetrics.textOrigin.height)
                 }
                 Text(model.text)
                     .font(.ui(16))
-                    .foregroundStyle(T.text)
+                    .foregroundStyle(model.paper.ink)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .frame(height: 76, alignment: .topLeading)
             } else {
@@ -421,12 +429,12 @@ struct CaptureView: View {
                     text: model.tag == "待办"
                           ? "每行一条待办，保存后自动变成可勾选项"
                           : "记下点什么…",
-                    color: T.textFaint,
+                    color: model.paper.ink.opacity(0.38),
                     fontSize: 16)
                     .frame(maxWidth: .infinity, minHeight: 76, maxHeight: 76,
                            alignment: .topLeading)
                     .allowsHitTesting(false)
-                PlainTextEditor(text: $model.text, fontSize: 16, ink: T.text)
+                PlainTextEditor(text: $model.text, fontSize: 16, ink: model.paper.ink)
                     .frame(height: 76)
             }
         }
@@ -459,7 +467,7 @@ struct CaptureView: View {
                 }
             Text("图片会作为这张便签的一部分保存")
                 .font(.ui(T.captionSize))
-                .foregroundStyle(T.textFaint)
+                .foregroundStyle(model.paper.ink.opacity(0.45))
                 .padding(.top, 3)
             Spacer(minLength: 0)
         }
@@ -474,17 +482,17 @@ struct CaptureView: View {
             if !model.hint.isEmpty {
                 Text(model.hint)
                     .font(.ui(T.captionSize))
-                    .foregroundStyle(T.textFaint)
+                    .foregroundStyle(model.paper.ink.opacity(0.45))
             }
             Text("⌘ ↩")
                 .font(.ui(T.captionSize))
-                .foregroundStyle(T.textFaint)
+                .foregroundStyle(model.paper.ink.opacity(0.34))
             // 0.3.7：与英雄纸同理——保存按钮永不因派生状态禁用；空态由 save()
             // 自己裁决（关面板，行为不变），组字中的草稿不再被锁在面板里。
             Button(action: onSave) {
                 Text("保存")
             }
-            .buttonStyle(PillButtonStyle(bg: T.accent, fg: T.accentInk, height: 28, hPad: 16)).handCursor()
+            .buttonStyle(PillButtonStyle(bg: model.paper.ink.opacity(0.85), fg: model.paper.paper, height: 28, hPad: 16)).handCursor()
         }
         .padding(.top, 14)
     }
@@ -523,11 +531,11 @@ struct CaptureView: View {
                     .font(.icon(7, .semibold))
             }
         }
-        .foregroundStyle(T.textDim)
+        .foregroundStyle(model.paper.ink.opacity(0.78))
         .padding(.horizontal, 8)
         .frame(height: 24)
         .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous).fill(T.inset)
+            RoundedRectangle(cornerRadius: 7, style: .continuous).fill(model.paper.ink.opacity(0.08))
         )
     }
 
@@ -537,8 +545,8 @@ struct CaptureView: View {
                 Button {
                     model.paper = p
                 } label: {
-                    PaperSwatch(paper: p, ink: .white, selected: model.paper == p,
-                                side: 15, cell: 22, ringOpacity: 0.88)
+                    PaperSwatch(paper: p, ink: model.paper.ink, selected: model.paper == p,
+                                side: 15, cell: 22)
                 }
                 .buttonStyle(.plain).handCursor()
                 .accessibilityLabel("换成\(p.title)纸")
@@ -549,7 +557,11 @@ struct CaptureView: View {
         .padding(.vertical, 2)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(0.06))
+                .fill(model.paper.ink.opacity(0.105))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(model.paper.ink.opacity(0.07), lineWidth: 1)
+                )
         )
     }
 }

@@ -587,9 +587,10 @@ final class HandCursorView: NSView {
 }
 
 extension View {
-    /// 挂到「可点击」视图上：显示手型光标，不影响点击与键盘焦点。
-    /// 输入框（TextField / PlainTextEditor）不要加，那里应该保持 I 形光标。
+    // 2026-11-16 起为空操作：全站去手型，一律系统默认箭头。
+    // 恢复时改回 `background(HandCursorArea(active: active))`。
     func handCursor(active: Bool = true) -> some View {
-        background(HandCursorArea(active: active))
+        // 修饰符保留为空操作——77 处调用点不用动，恢复手型时改回一行即可。
+        self
     }
 }
