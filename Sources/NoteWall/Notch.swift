@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 // MARK: - 刘海入口
 //
@@ -356,6 +357,8 @@ final class NotchController {
     private var localOutsideMonitor: Any?
     private var isFlushing = false
     private var screenObserver: NSObjectProtocol?
+    /// 刘海总开关的订阅（0.3.15）：存这里，控制器活多久订阅活多久。
+    private var cancellables: Set<AnyCancellable> = []
     private let model = NotchModel()
     private weak var store: AppStore?
     private(set) var isExpanded = false
@@ -380,10 +383,17 @@ final class NotchController {
                     MainActor.assumeIsolated { self?.screenParametersChanged() }
                 }
         }
+        // 刘海总开关（0.3.15）：订阅会立刻收到当前值，启动即生效——
+        // 关着启动就不建面板，开着启动照常建；设置里拨动开关立即装/卸。
+        store.$notchEnabled
+            .sink { [weak self] on in on ? self?.installPanelIfPossible() : self?.teardown() }
+            .store(in: &cancellables)
         installPanelIfPossible()
     }
 
     private func installPanelIfPossible() {
+        // 关着的时候绝不能把面板装回来（屏幕插拔也会走到这里）。
+        guard store?.notchEnabled == true else { return }
         guard panel == nil,
               let (s, g) = Self.resolveNotchScreen() else { return }
         screen = s
@@ -648,6 +658,16 @@ final class NotchController {
     }
 
     func collapseNow() { apply(false) }
+
+    /// 刘海总开关关掉时的卸载（0.3.15）：收起走 apply(false)，复用它的全部清理
+    ///（flushSave、清详情态、停监听、按策略重上锁、复位 isExpanded），
+    /// 再下掉面板并置空——installPanelIfPossible 只认 panel == nil 才重建。
+    func teardown() {
+        collapseWork?.cancel()
+        collapseNow()
+        panel?.orderOut(nil)
+        panel = nil
+    }
 
     // MARK: 布局
 

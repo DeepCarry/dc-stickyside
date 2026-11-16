@@ -619,6 +619,14 @@ struct SettingsSheet: View {
                     }
 
                     group("屏幕边缘") {
+                        row("刘海悬浮窗", subtitle: "鼠标移到刘海展开便签；关掉后刘海不再响应，别的软件可以用它") {
+                            if RenderFlags.snapshot {
+                                FakeSwitch(on: store.notchEnabled)
+                            } else {
+                                Toggle("", isOn: store.bind(\.notchEnabled))
+                                    .toggleStyle(.switch).labelsHidden().handCursor()
+                            }
+                        }
                         row("边缘便签条", subtitle: "屏幕边缘常驻一条细边，鼠标移过去展开") {
                             if RenderFlags.snapshot {
                                 FakeSwitch(on: store.edgeEnabled)
