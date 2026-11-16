@@ -62,6 +62,8 @@ struct Archive: Codable {
 
     // 屏幕边缘条（Edge Deck）
     var edgeEnabled: Bool? = nil
+    // 刘海悬浮窗（Notch，0.3.15）：nil = 开，默认开启
+    var notchEnabled: Bool? = nil
     var edgeSide: EdgeSide? = nil
     var edgeMode: EdgeMode? = nil
     var edgeCount: Int? = nil
@@ -120,6 +122,8 @@ final class AppStore: ObservableObject {
 
     /// 边缘条总开关。默认开（D2）：12pt 细条存在感极低，而功能的全部价值在「被发现」。
     @Published var edgeEnabled: Bool = true { didSet { scheduleSave() } }
+    /// 刘海悬浮窗总开关（0.3.15）。默认开；关掉后刘海入口彻底不响应，别的软件可以用刘海。
+    @Published var notchEnabled: Bool = true { didSet { scheduleSave() } }
     @Published var edgeSide: EdgeSide = .right { didSet { scheduleSave() } }
     @Published var edgeMode: EdgeMode = .recent { didSet { scheduleSave() } }
     /// 最近编辑模式下最多显示几张
@@ -303,6 +307,7 @@ final class AppStore: ObservableObject {
             unlockPolicy = a.unlockPolicy ?? .everyTime
             hotkeys = a.hotkeys ?? .standard
             edgeEnabled = a.edgeEnabled ?? true
+            notchEnabled = a.notchEnabled ?? true
             edgeSide = a.edgeSide ?? .right
             edgeMode = a.edgeMode ?? .recent
             edgeCount = a.edgeCount ?? 8
@@ -362,6 +367,7 @@ final class AppStore: ObservableObject {
         a.unlockPolicy = unlockPolicy
         a.hotkeys = hotkeys
         a.edgeEnabled = edgeEnabled
+        a.notchEnabled = notchEnabled
         a.edgeSide = edgeSide
         a.edgeMode = edgeMode
         a.edgeCount = edgeCount
