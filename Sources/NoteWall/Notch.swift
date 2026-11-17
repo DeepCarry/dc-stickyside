@@ -336,9 +336,11 @@ final class NotchTrackingContainer: NSView {
         addTrackingArea(NSTrackingArea(rect: .zero,
                                        options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
                                        owner: self, userInfo: nil))
+        // 0.3.19 诊断（临时）：只在诊断版留着，正式修复版按 docs-049-diagnostic L1–L8 全删。
+        NSLog("[NotchDiag] trackingAreas rebuilt count=\(trackingAreas.count) bounds=\(bounds)")
     }
-    override func mouseEntered(with event: NSEvent) { onEnter?() }
-    override func mouseExited(with event: NSEvent) { onExit?() }
+    override func mouseEntered(with event: NSEvent) { NSLog("[NotchDiag] mouseEntered"); onEnter?() }
+    override func mouseExited(with event: NSEvent) { NSLog("[NotchDiag] mouseExited"); onExit?() }
 
     /// 显式重建跟踪区：关→开复用同一块面板时调一次。AppKit 跟踪区在窗口下线后
     /// 可能失活（IINA 在 macOS 15 全屏进出后用同一招修 mouseMoved 失活），
@@ -393,9 +395,15 @@ final class NotchController {
         // 0.3.18：开走 show()（复用面板），不再整套重建——重建的面板在真机上
         // 再也不响应悬停（见 teardown 注释）。
         store.$notchEnabled
-            .sink { [weak self] on in on ? self?.show() : self?.teardown() }
+            .sink { [weak self] on in
+                // 0.3.20 诊断（临时）：emitted 与 stored 对照——@Published 在 willSet
+                // 先发新值，订阅同步送达时属性里还是旧值；若 stored 仍是 false，就是病灶。
+                NSLog("[NotchDiag] sink emitted=\(on) stored=\(String(describing: self?.store?.notchEnabled)) panelNil=\(self?.panel == nil)")
+                on ? self?.show() : self?.teardown()
+            }
             .store(in: &cancellables)
-        show()
+        // 0.3.20：启动时属性已 settle，直接读是准的；关着启动不建面板。
+        if store.notchEnabled { show() }
     }
 
     /// 首次建面板（只建一次，与 EdgeDeck.ensurePanel 同款）：建好后停在收起帧，
@@ -514,22 +522,35 @@ final class NotchController {
     ///（teardown 走 collapseNow 复位过；新建的面板也是收起帧），所以无条件按
     /// 收起帧摆位是安全的。
     func show() {
-        guard store?.notchEnabled == true else { return }
+        // 0.3.20：删掉 guard store?.notchEnabled == true 的重读——sink 发来的 on
+        // 就是权威值；@Published 在 willSet 先发新值，同步订阅里再读属性还是旧值
+        // false，ON 路径会被这条 guard 静默拦住（ChatGPT H1，见 docs-050 §1）。
+        // 三个调用点各自有闸：sink 靠 emitted 值、install 靠显式 if、
+        // screenParametersChanged 靠顶部 guard。
+        // 0.3.19 诊断（临时）：入口、两道闸、完成各一行。
+        NSLog("[NotchDiag] show entry enabled=\(store?.notchEnabled ?? false) panelNil=\(panel == nil)")
         ensurePanel()
-        guard let p = panel,
-              let (s, g) = Self.resolveNotchScreen() else { return }
+        guard let p = panel else { NSLog("[NotchDiag] show return: panel nil"); return }
+        guard let (s, g) = Self.resolveNotchScreen() else { NSLog("[NotchDiag] show return: no notch screen"); return }
         screen = s
         geometry = g
         model.notchWidth = g.width
         model.notchHeight = g.height
         model.cardWidth = g.cardWidth(screenWidth: s.frame.width)
         p.setFrame(frame(expanded: false), display: false)
-        (p.contentView as? NotchTrackingContainer)?.refreshTrackingAreas()
         p.orderFrontRegardless()
+        // 0.3.20：tracking area 改在请出之后异步刷新——面板还下线时注册的区域
+        // 可能无效（ChatGPT H2）。0.3.18 的同步刷新删掉，只保留这一次。
+        DispatchQueue.main.async {
+            (p.contentView as? NotchTrackingContainer)?.refreshTrackingAreas()
+        }
+        NSLog("[NotchDiag] show done frame=\(p.frame) visible=\(p.isVisible) areas=\((p.contentView as? NotchTrackingContainer)?.trackingAreas.count ?? -1) screen=\(s.localizedName)")
     }
 
     /// 显示配置变化时重定位：刘海屏可能换位、消失（合盖）或出现（开盖 / 插屏）。
     private func screenParametersChanged() {
+        // 0.3.19 诊断（临时）。
+        NSLog("[NotchDiag] screenParamsChanged enabled=\(store?.notchEnabled ?? false) panelNil=\(panel == nil)")
         // 关着时什么都不做：面板保持下线，绝不能把它装回来。0.3.15 时面板在关时
         // 已被销毁，这条路走重建入口会被 notchEnabled 闸拦住；0.3.18
         // 面板留着了，旧代码的“重定位 + isVisible==false 时 orderFront”会把面板
@@ -558,6 +579,8 @@ final class NotchController {
     // MARK: 悬停
 
     func hoverEnter() {
+        // 0.3.19 诊断（临时）。
+        NSLog("[NotchDiag] hoverEnter isExpanded=\(isExpanded)")
         collapseWork?.cancel()
         collapseWork = nil
         refreshNotes()
@@ -680,6 +703,8 @@ final class NotchController {
     }
 
     func hoverExit() {
+        // 0.3.19 诊断（临时）。
+        NSLog("[NotchDiag] hoverExit isExpanded=\(isExpanded) editSessionActive=\(editSessionActive)")
         // 编辑会话中鼠标移开不收起（同边缘抽出面板）
         if editSessionActive { return }
         collapseWork?.cancel()
@@ -696,6 +721,8 @@ final class NotchController {
     /// 窗口撤出屏幕，刘海彻底让给别的软件，对象留着只占内存；0.3.15 关时销毁
     /// 面板、重开时整套重建，重建的面板在真机上再也不响应悬停——这就是本次 bug。
     func teardown() {
+        // 0.3.19 诊断（临时）。
+        NSLog("[NotchDiag] teardown panelNil=\(panel == nil) visible=\(panel?.isVisible ?? false)")
         collapseWork?.cancel()
         collapseNow()
         panel?.orderOut(nil)
@@ -740,6 +767,8 @@ final class NotchController {
             ctx.allowsImplicitAnimation = true
             p.animator().setFrame(frame(expanded: expanded), display: true)
         }
+        // 0.3.19 诊断（临时）。
+        NSLog("[NotchDiag] apply expanded=\(expanded) frame=\(p.frame) visible=\(p.isVisible)")
     }
 }
 
