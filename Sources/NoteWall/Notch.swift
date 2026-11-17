@@ -339,6 +339,11 @@ final class NotchTrackingContainer: NSView {
     }
     override func mouseEntered(with event: NSEvent) { onEnter?() }
     override func mouseExited(with event: NSEvent) { onExit?() }
+
+    /// 显式重建跟踪区：关→开复用同一块面板时调一次。AppKit 跟踪区在窗口下线后
+    /// 可能失活（IINA 在 macOS 15 全屏进出后用同一招修 mouseMoved 失活），
+    /// 重建一次是最便宜的保险；平时不调，不增加任何常驻开销。
+    func refreshTrackingAreas() { updateTrackingAreas() }
 }
 
 @MainActor
@@ -385,15 +390,18 @@ final class NotchController {
         }
         // 刘海总开关（0.3.15）：订阅会立刻收到当前值，启动即生效——
         // 关着启动就不建面板，开着启动照常建；设置里拨动开关立即装/卸。
+        // 0.3.18：开走 show()（复用面板），不再整套重建——重建的面板在真机上
+        // 再也不响应悬停（见 teardown 注释）。
         store.$notchEnabled
-            .sink { [weak self] on in on ? self?.installPanelIfPossible() : self?.teardown() }
+            .sink { [weak self] on in on ? self?.show() : self?.teardown() }
             .store(in: &cancellables)
-        installPanelIfPossible()
+        show()
     }
 
-    private func installPanelIfPossible() {
-        // 关着的时候绝不能把面板装回来（屏幕插拔也会走到这里）。
-        guard store?.notchEnabled == true else { return }
+    /// 首次建面板（只建一次，与 EdgeDeck.ensurePanel 同款）：建好后停在收起帧，
+    /// 请出由 show() 管。建面板本身不占刘海（没 orderFront 就不在屏幕上），
+    /// 是否请出由 show() 的闸决定。
+    private func ensurePanel() {
         guard panel == nil,
               let (s, g) = Self.resolveNotchScreen() else { return }
         screen = s
@@ -499,13 +507,36 @@ final class NotchController {
         p.contentView = container
         p.setFrame(frame(expanded: false), display: false)
         panel = p
+    }
+
+    /// 开：面板已在就直接请回前台，不在就现建；请出前重算一次几何（关着期间
+    /// 屏幕可能变过）并刷新跟踪区。不变量：进到这里时 isExpanded 一定是 false
+    ///（teardown 走 collapseNow 复位过；新建的面板也是收起帧），所以无条件按
+    /// 收起帧摆位是安全的。
+    func show() {
+        guard store?.notchEnabled == true else { return }
+        ensurePanel()
+        guard let p = panel,
+              let (s, g) = Self.resolveNotchScreen() else { return }
+        screen = s
+        geometry = g
+        model.notchWidth = g.width
+        model.notchHeight = g.height
+        model.cardWidth = g.cardWidth(screenWidth: s.frame.width)
+        p.setFrame(frame(expanded: false), display: false)
+        (p.contentView as? NotchTrackingContainer)?.refreshTrackingAreas()
         p.orderFrontRegardless()
     }
 
     /// 显示配置变化时重定位：刘海屏可能换位、消失（合盖）或出现（开盖 / 插屏）。
     private func screenParametersChanged() {
+        // 关着时什么都不做：面板保持下线，绝不能把它装回来。0.3.15 时面板在关时
+        // 已被销毁，这条路走重建入口会被 notchEnabled 闸拦住；0.3.18
+        // 面板留着了，旧代码的“重定位 + isVisible==false 时 orderFront”会把面板
+        // 请回来，必须先在这里拦住。
+        guard store?.notchEnabled == true else { return }
         if panel == nil {
-            installPanelIfPossible()
+            show()
             return
         }
         guard let (s, g) = Self.resolveNotchScreen() else {
@@ -659,14 +690,15 @@ final class NotchController {
 
     func collapseNow() { apply(false) }
 
-    /// 刘海总开关关掉时的卸载（0.3.15）：收起走 apply(false)，复用它的全部清理
+    /// 刘海总开关关掉时的卸载（0.3.18 改）：收起走 apply(false)，复用它的全部清理
     ///（flushSave、清详情态、停监听、按策略重上锁、复位 isExpanded），
-    /// 再下掉面板并置空——installPanelIfPossible 只认 panel == nil 才重建。
+    /// 再下掉面板。面板对象留着不销毁（与 EdgeDeck.teardown 同款）：orderOut 已把
+    /// 窗口撤出屏幕，刘海彻底让给别的软件，对象留着只占内存；0.3.15 关时销毁
+    /// 面板、重开时整套重建，重建的面板在真机上再也不响应悬停——这就是本次 bug。
     func teardown() {
         collapseWork?.cancel()
         collapseNow()
         panel?.orderOut(nil)
-        panel = nil
     }
 
     // MARK: 布局
